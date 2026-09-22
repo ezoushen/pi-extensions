@@ -13,6 +13,7 @@
   "scripts": {
     "build": "npx esbuild extensions/*/*.ts --bundle --platform=node --format=esm --packages=external --outbase=. --outdir=.",
     "test": "node --experimental-strip-types --test extensions/*/test-*.mjs test/*.test.mjs",
-    "test:live": "node --experimental-strip-types --test test/live/real-session.test.mjs"
+    "test:live": "node --experimental-strip-types --test test/live/real-session.test.mjs",
+    "pretest": "npm run build"
   }
 }

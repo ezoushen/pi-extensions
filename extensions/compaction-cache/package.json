@@ -14,6 +14,15 @@
     "pi-package"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ezoushen/pi-extensions.git",
+    "directory": "extensions/compaction-cache"
+  },
+  "homepage": "https://github.com/ezoushen/pi-extensions/tree/main/extensions/compaction-cache#readme",
+  "bugs": {
+    "url": "https://github.com/ezoushen/pi-extensions/issues"
+  },
   "dependencies": {
     "minimatch": "10.2.6"
   },

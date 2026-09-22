@@ -14,6 +14,15 @@
     "pi-package"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ezoushen/pi-extensions.git",
+    "directory": "extensions/prefix-stabilizer"
+  },
+  "homepage": "https://github.com/ezoushen/pi-extensions/tree/main/extensions/prefix-stabilizer#readme",
+  "bugs": {
+    "url": "https://github.com/ezoushen/pi-extensions/issues"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
