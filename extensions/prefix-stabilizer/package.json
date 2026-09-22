@@ -1,0 +1,28 @@
+{
+  "name": "pi-prefix-stabilizer",
+  "version": "0.1.0",
+  "description": "Keep Pi's system prompt byte-stable for prefix-cache reuse.",
+  "type": "module",
+  "main": "./prefix-stabilizer.js",
+  "exports": "./prefix-stabilizer.js",
+  "files": [
+    "prefix-stabilizer.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./prefix-stabilizer.js"
+    ]
+  }
+}

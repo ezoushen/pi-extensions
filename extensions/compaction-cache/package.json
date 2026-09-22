@@ -1,0 +1,31 @@
+{
+  "name": "pi-compaction-cache",
+  "version": "0.1.0",
+  "description": "Make Pi compaction reuse the server's KV prefix cache.",
+  "type": "module",
+  "main": "./compaction-cache.js",
+  "exports": "./compaction-cache.js",
+  "files": [
+    "compaction-cache.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "minimatch": "10.2.6"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./compaction-cache.js"
+    ]
+  }
+}
