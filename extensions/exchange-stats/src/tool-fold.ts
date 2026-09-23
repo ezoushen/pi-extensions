@@ -36,11 +36,12 @@ function elapsed(ms: number): string {
 	return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
-function headline(trace: string): string {
+function headline(trace: string, streaming: boolean): string {
 	const plain = trace.replace(/^\s*(?:[-*+]|\d+\.)\s+/gm, "").replace(/\*\*|`/g, "");
 	let start = 0;
 	let last = "Thinking";
-	for (const end of plain.matchAll(/[.?!。]+|\r?\n/g)) {
+	const boundaries = streaming ? /[.?!]+(?=\s)|[。？！]+|\r?\n/g : /[.?!]+(?=\s|$)|[。？！]+|\r?\n/g;
+	for (const end of plain.matchAll(boundaries)) {
 		const sentence = plain.slice(start, end.index + end[0].length).trim().replace(/\s+/g, " ");
 		if (sentence) last = sentence;
 		start = end.index + end[0].length;
@@ -103,7 +104,7 @@ class ThinkingFoldModel {
 	title(message: ThinkingMessage, index: number, trace: string, streaming: boolean): string {
 		const block = this.forMessage(message, false)?.get(index);
 		const ms = block ? Math.max(0, (block.endedAt ?? this.now()) - block.startedAt) : 0;
-		const label = headline(trace);
+		const label = headline(trace, streaming && block?.endedAt === undefined);
 		if (!streaming || block?.endedAt !== undefined) {
 			const words = trace.trim().split(/\s+/).filter(Boolean).length;
 			return `◈ ${label} · ${elapsed(ms)} · ${words} ${words === 1 ? "word" : "words"}`;
