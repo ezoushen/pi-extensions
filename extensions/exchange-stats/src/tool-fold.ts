@@ -351,6 +351,24 @@ export class ToolFoldModel {
 	ownsTool(id: string): boolean { return this.processByBlock.has(`tool:${id}`) || this.blocks.has(id); }
 	/** Whether this model has ingested the assistant message, so its session owns the component. */
 	ownsMessage(message: ThinkingMessage): boolean { return typeof message?.timestamp === "number" && this.seenContent.has(message.timestamp); }
+	/**
+	 * Whether a thinking run or tool call in the message matches what this model ingested
+	 * for that timestamp. Used to tell apart sessions whose messages share a timestamp.
+	 */
+	ingestedContentOf(message: ThinkingMessage & { content?: ProcessMessage["content"] }): boolean {
+		const content = message?.content ?? [];
+		for (let index = 0; index < content.length; index++) {
+			const item = content[index];
+			if (item.type === "toolCall" && item.id && this.processByBlock.has(`tool:${item.id}`)) return true;
+			if (item.type !== "thinking" || content[index - 1]?.type === "thinking") continue;
+			const traces: string[] = [];
+			for (let run = index; content[run]?.type === "thinking"; run++) if (content[run].thinking?.trim()) traces.push(content[run].thinking!.trim());
+			const key = `thinking:${message.timestamp}:${index}`;
+			const block = this.processByBlock.get(key)?.blocks.find((candidate) => candidate.key === key);
+			if (block?.kind === "thinking" && block.trace === traces.join("\n\n")) return true;
+		}
+		return false;
+	}
 	isProcessLead(id: string, key: string): boolean { return this.processById.get(id)?.blocks[0]?.key === key; }
 	toggleProcess(id: string): boolean | undefined {
 		const process = this.processById.get(id);

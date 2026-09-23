@@ -6,13 +6,14 @@ import { registerExchangeStats } from "./exchange-stats.ts";
 initTheme("dark");
 
 function mount() {
-	const handlers = new Map();
+	const handlers = new Map(), shortcuts = new Map();
 	registerExchangeStats({
 		on: (name, handler) => handlers.set(name, handler),
-		registerShortcut() {}, registerCommand() {}, registerEntryRenderer() {}, appendEntry() {},
+		registerShortcut: (key, value) => shortcuts.set(key, value.handler), registerCommand() {}, registerEntryRenderer() {}, appendEntry() {},
 	});
 	const ctx = { hasUI: true, model: { id: "test" }, ui: { setStatus() {}, notify() {} } };
 	return { start: () => handlers.get("session_start")({}, ctx), stop: () => handlers.get("session_shutdown")(),
+		toggleLatestProcess: () => shortcuts.get("ctrl+alt+f")(ctx),
 		feedThinking(trace, timestamp = 200) {
 			handlers.get("before_agent_start")({}, ctx);
 			const message = { role: "assistant", timestamp, content: [{ type: "text", text: "next" }, { type: "thinking", thinking: trace }] };
@@ -107,6 +108,21 @@ test("overlapping owners each render their own tool and thinking components", ()
 		assert.match(renderThinking("checking the first session", 300), /▸.*◈1/);
 		assert.doesNotMatch(renderThinking("checking the first session", 300), /checking the first session/);
 		assert.match(renderThinking("checking the second session", 400), /▸.*◈1/);
+	} finally { first.stop(); second.stop(); }
+});
+
+test("owners with assistant messages at the same timestamp each render their own thinking", () => {
+	const first = mount(), second = mount();
+	try {
+		first.start();
+		second.start();
+		first.feedThinking("checking the first session", 42);
+		second.feedThinking("checking the second session", 42);
+		second.toggleLatestProcess();
+		const firstLines = renderThinking("checking the first session", 42);
+		assert.match(firstLines, /▸ ◈1/);
+		assert.doesNotMatch(firstLines, /▾/);
+		assert.match(renderThinking("checking the second session", 42), /▾ ◈1/);
 	} finally { first.stop(); second.stop(); }
 });
 

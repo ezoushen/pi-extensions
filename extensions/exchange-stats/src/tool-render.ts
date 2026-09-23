@@ -63,8 +63,8 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 	const hadOwnMouse = prototype && Object.hasOwn(prototype, "handleMouse");
 	if (typeof original !== "function") return { installed: false, restore() {} };
 
-	// Overlapping sessions share this wrapper. A component belongs to the session whose
-	// model knows its tool call; the latest owner renders calls no session has seen yet.
+	// Overlapping sessions share this wrapper. A component renders with the latest session
+	// whose model knows its tool call id, or with the latest owner when none does yet.
 	const ownerFor = (component: ToolComponent): ToolOwner => {
 		const all = Array.from(owners);
 		return all.findLast((owner) => owner.model.ownsTool(component.toolCallId)) ?? all.at(-1)!;
@@ -173,10 +173,16 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 	const original = prototype?.updateContent;
 	if (typeof original !== "function") return { installed: false, restore() {} };
 
-	// As for tools: the session whose model ingested the message owns its component.
+	// The owner is the session that ingested a message with this timestamp. Timestamps are
+	// milliseconds and can coincide across sessions; then the latest claimant whose
+	// ingested thinking or tool calls match this message's content wins. Claimants with
+	// identical content at the same timestamp, and a message no session has ingested
+	// yet, fall back to the latest candidate.
 	const ownerFor = (message: Message): ThinkingOwner => {
 		const all = Array.from(owners);
-		return all.findLast((owner) => owner.model.ownsMessage(message)) ?? all.at(-1)!;
+		const claimants = all.filter((owner) => owner.model.ownsMessage(message));
+		if (claimants.length > 1) return claimants.findLast((owner) => owner.model.ingestedContentOf(message)) ?? claimants.at(-1)!;
+		return claimants[0] ?? all.at(-1)!;
 	};
 
 	function foldContent(this: AssistantComponent, message: Message, isStreaming?: boolean): void {
