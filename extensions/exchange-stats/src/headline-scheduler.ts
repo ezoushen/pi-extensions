@@ -12,7 +12,7 @@ interface BlockState {
 interface SchedulerOptions {
 	summarize(trace: string, signal: AbortSignal): Promise<string>;
 	onHeadline(key: string, headline: string | undefined): void;
-	onFailure(reason: "error" | "timeout"): void;
+	onFailure(reason: "error" | "timeout" | "length", message?: string): void;
 	now?: () => number;
 	timeoutMs?: number;
 }
@@ -20,6 +20,8 @@ interface SchedulerOptions {
 const TOKEN_INTERVAL = 400;
 const TIME_INTERVAL_MS = 6_000;
 const TRACE_CHARS = 1_500;
+
+export class HeadlineLengthError extends Error {}
 
 /** Requests short display headlines without holding up thinking events or rendering. */
 export class HeadlineScheduler {
@@ -100,13 +102,17 @@ export class HeadlineScheduler {
 			this.options.onHeadline(key, undefined);
 			if (!this.announcedFailure) {
 				this.announcedFailure = true;
-				this.options.onFailure(error instanceof Error && error.message === "headline timeout" ? "timeout" : "error");
+				this.options.onFailure(
+					error instanceof HeadlineLengthError ? "length" : controller.signal.aborted && error instanceof Error && error.message === "headline timeout" ? "timeout" : "error",
+					error instanceof Error ? error.message : String(error),
+				);
 			}
 		}).finally(() => {
 			if (timer) clearTimeout(timer);
 			if (this.timer === timer) this.timer = undefined;
 			if (this.abort === controller) this.abort = undefined;
 			this.inFlight = false;
+			if (block.settled && block.finalRequested) this.blocks.delete(key);
 			this.tick();
 		});
 	}

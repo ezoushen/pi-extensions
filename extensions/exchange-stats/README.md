@@ -111,6 +111,16 @@ reasoning off and a 32 token output cap. The model call never delays the turn or
 the trace; with the setting absent or an unknown model, titles use the trace
 sentence.
 
+The summary model must honor Pi's reasoning `off` level. For a reasoning model
+whose provider needs `none` to disable thinking, add this field to that model's
+entry in Pi's `models.json`:
+
+```json
+{ "thinkingLevelMap": { "off": "none" } }
+```
+
+Without it, a model may spend the 32 token cap reasoning and return no headline.
+
 ## Install and verify
 
 ```sh

@@ -44,6 +44,8 @@ test("live thinking requests at token or time thresholds, never overlaps, and se
 	assert.equal(calls.at(-1).at, 20000);
 	calls.at(-1).pending.resolve("Final headline");
 	await flush();
+	assert.equal(scheduler.blocks.has(key), false);
+	scheduler.tick();
 	scheduler.settle(key);
 	assert.equal(calls.length, 4);
 	scheduler.dispose();
@@ -81,7 +83,7 @@ test("rejection and timeout keep the fallback and announce once", async () => {
 		now: () => now, timeoutMs: 5,
 		summarize: () => Promise.reject(new Error("broken")),
 		onHeadline: (_key, headline) => headlines.push(headline),
-		onFailure: (reason) => failures.push(reason),
+		onFailure: (reason, message) => failures.push([reason, message]),
 	});
 	scheduler.observe("1:0", "x".repeat(1600));
 	await flush();
@@ -89,17 +91,17 @@ test("rejection and timeout keep the fallback and announce once", async () => {
 	scheduler.observe("1:0", "x".repeat(3200));
 	await flush();
 	assert.deepEqual(headlines, [undefined, undefined]);
-	assert.deepEqual(failures, ["error"]);
+	assert.deepEqual(failures, [["error", "broken"]]);
 	scheduler.dispose();
 
 	const timed = new HeadlineScheduler({
 		now: () => now, timeoutMs: 5, summarize: () => new Promise(() => {}),
 		onHeadline: (_key, headline) => headlines.push(headline),
-		onFailure: (reason) => failures.push(reason),
+		onFailure: (reason, message) => failures.push([reason, message]),
 	});
 	timed.observe("2:0", "x".repeat(1600));
 	await new Promise((resolve) => setTimeout(resolve, 15));
 	assert.equal(headlines.at(-1), undefined);
-	assert.equal(failures.at(-1), "timeout");
+	assert.deepEqual(failures.at(-1), ["timeout", "headline timeout"]);
 	timed.dispose();
 });
