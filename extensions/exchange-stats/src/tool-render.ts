@@ -17,7 +17,7 @@ interface ToolClass {
 }
 
 interface TitleTheme {
-	fg(color: "dim", text: string): string;
+	fg(color: "dim" | "accent", text: string): string;
 }
 
 function truncateProcessLine(text: string, width: number): string {
@@ -39,9 +39,9 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 			if (process && !model.isProcessOpen(process.id) && !model.isProcessLead(process.id, `tool:${this.toolCallId}`)) return [];
 			const processText = process && model.isProcessLead(process.id, `tool:${this.toolCallId}`)
 				? truncateProcessLine(model.processLine(process.id), width) : undefined;
-			const processLine = processText === undefined ? [] : [getTheme()?.fg("dim", processText) ?? processText];
+			const processLine = processText === undefined ? [] : [getTheme()?.fg(model.isCursorHighlighted(`process:${process!.id}`) ? "accent" : "dim", processText) ?? processText];
 			if (process && !model.isProcessOpen(process.id)) return processLine;
-			if (model.isOpen(this.toolCallId)) return [...processLine, ...original.call(this, width)];
+			if (model.isOpen(this.toolCallId) && !model.isCursorHighlighted(`tool:${this.toolCallId}`)) return [...processLine, ...original.call(this, width)];
 			const parts = model.titleParts(this.toolCallId);
 			if (!parts || width <= 0) return original.call(this, width);
 			const name = truncateToWidth(`⚙ ${parts.name}`, width, "");
@@ -52,7 +52,8 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 				? truncateToWidth(`  ${parts.argument}`, argumentWidth, "…")
 				: "";
 			const title = name + argument + stats;
-			return [...processLine, getTheme()?.fg("dim", title) ?? title];
+			const styled = getTheme()?.fg(model.isCursorHighlighted(`tool:${this.toolCallId}`) ? "accent" : "dim", title) ?? title;
+			return [...processLine, styled, ...(model.isOpen(this.toolCallId) ? original.call(this, width) : [])];
 		} catch {
 			return original.call(this, width);
 		}
@@ -171,11 +172,12 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 					const padding = Math.min(component.outputPad, Math.max(0, Math.floor((width - 1) / 2)));
 					const processText = lead ? truncateProcessLine(model.processLine(process!.id), width - padding * 2) : undefined;
 					const processLine = processText === undefined ? []
-						: new Text(getTheme()?.fg("dim", processText) ?? processText, component.outputPad, 0).render(width);
+						: new Text(getTheme()?.fg(model.isCursorHighlighted(`process:${process!.id}`) ? "accent" : "dim", processText) ?? processText, component.outputPad, 0).render(width);
 					if (process && !model.isProcessOpen(process.id)) return processLine;
-					if (model.isThinkingOpen(message, run.index)) return [...processLine, ...(native as MouseRegion).child.render(width)];
+					if (model.isThinkingOpen(message, run.index) && !model.isCursorHighlighted(`thinking:${message.timestamp}:${run.index}`)) return [...processLine, ...(native as MouseRegion).child.render(width)];
 					const title = fitThinkingLine(model.thinkingTitle(message, run.index, run.trace, component.isStreaming), width - padding * 2);
-					return [...processLine, ...new Text(getTheme()?.fg("dim", title) ?? title, component.outputPad, 0).render(width)];
+					return [...processLine, ...new Text(getTheme()?.fg(model.isCursorHighlighted(`thinking:${message.timestamp}:${run.index}`) ? "accent" : "dim", title) ?? title, component.outputPad, 0).render(width),
+						...(model.isThinkingOpen(message, run.index) ? (native as MouseRegion).child.render(width) : [])];
 				},
 				invalidate() {},
 			};

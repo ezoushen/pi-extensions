@@ -184,6 +184,8 @@ export class ToolFoldModel {
 	private thinking: ThinkingFoldModel;
 	private saved?: (id: string) => FoldBlockRecord | undefined;
 	private pendingThinking = new Map<string, FoldBlockRecord>();
+	private cursorActive = false;
+	private cursorKey?: string;
 
 	constructor(now: () => number = Date.now) {
 		this.now = now;
@@ -201,6 +203,8 @@ export class ToolFoldModel {
 		this.currentExchange = 0;
 		this.thinking = new ThinkingFoldModel(this.now);
 		this.pendingThinking.clear();
+		this.cursorActive = false;
+		this.cursorKey = undefined;
 		this.saved = saved;
 	}
 
@@ -263,6 +267,47 @@ export class ToolFoldModel {
 	}
 
 	processes(): ReadonlyArray<Process> { return this.processList; }
+	private cursorRows(): Array<{ key: string; title: string; toggle: () => void }> {
+		const rows: Array<{ key: string; title: string; toggle: () => void }> = [];
+		for (const process of this.processList) {
+			const last = process.blocks.at(-1);
+			const detail = last?.kind === "thinking" ? this.thinkingTitle(last.message, last.index, last.trace, false)
+				: last?.kind === "tool" ? this.titleParts(last.key.slice(5)) : undefined;
+			const label = typeof detail === "string" ? detail : detail ? `⚙ ${detail.name} ${detail.argument}`.trim() : "";
+			rows.push({ key: `process:${process.id}`, title: `${this.processLine(process.id)}${label ? ` · ${label}` : ""}`, toggle: () => { this.toggleProcess(process.id); } });
+			if (!process.open) continue;
+			for (const block of process.blocks) {
+				if (block.kind === "thinking") rows.push({ key: block.key, title: this.thinkingTitle(block.message, block.index, block.trace, false), toggle: () => { this.toggleThinking(block.message, block.index); } });
+				else {
+					const id = block.key.slice(5);
+					const parts = this.titleParts(id);
+					rows.push({ key: block.key, title: `⚙ ${parts?.name ?? "tool"} ${parts?.argument ?? ""}`.trim(), toggle: () => { this.toggle(id); } });
+				}
+			}
+		}
+		return rows;
+	}
+	/** Selects rendered process lines and block titles in transcript order. */
+	startCursor(): boolean {
+		const first = this.cursorRows()[0];
+		if (!first) return false;
+		this.cursorActive = true;
+		this.cursorKey = first.key;
+		return true;
+	}
+	stopCursor(): void { this.cursorActive = false; this.cursorKey = undefined; }
+	cursorMove(delta: number): void {
+		const rows = this.cursorRows();
+		if (!rows.length) { this.cursorKey = undefined; return; }
+		const index = rows.findIndex((row) => row.key === this.cursorKey);
+		this.cursorKey = rows[Math.max(0, Math.min(rows.length - 1, Math.max(0, index) + delta))].key;
+	}
+	cursorToggle(): void {
+		const row = this.cursorRows().find((item) => item.key === this.cursorKey);
+		row?.toggle();
+	}
+	cursorTitle(): string | undefined { return this.cursorActive ? this.cursorRows().find((item) => item.key === this.cursorKey)?.title : undefined; }
+	isCursorHighlighted(key: string): boolean { return this.cursorActive && this.cursorKey === key; }
 	beginExchange(index = this.currentExchange + 1): void { this.currentExchange = index; this.openProcess = undefined; }
 	endExchange(): void { this.openProcess = undefined; }
 	toggleLatestProcess(): boolean | undefined {
