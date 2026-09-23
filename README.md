@@ -3,14 +3,15 @@
 Four extensions for the [pi coding agent](https://pi.dev), published from one repository.
 
 Three of them exist because a long-running agent session repeatedly pays to re-read
-context a server already has. The fourth just tells you what a turn cost.
+context a server already has. The fourth shows what each exchange cost and folds its
+thinking and tool calls into compact lines.
 
 | package | what it does |
 |---|---|
 | [`pi-prefix-stabilizer`](extensions/prefix-stabilizer) | Keeps pi's system prompt byte-stable so a server's KV prefix cache survives across turns and resumes. Normalises the install path, sorts tools deterministically, and warns once when the prompt genuinely drifts. |
 | [`pi-compaction-cache`](extensions/compaction-cache) | Makes `/compact` reuse that cache instead of re-prefilling the window from cold, by building the summarization request as a true prefix of the live conversation. |
 | [`pi-cmem`](extensions/cmem) | Bridges pi to a [claude-mem](https://github.com/thedotmack/claude-mem) worker over its HTTP API, so pi sessions share one memory namespace with other agents working in the same repository. |
-| [`pi-exchange-stats`](extensions/exchange-stats) | Timing and cost for each exchange, in the status line, with per-turn detail on demand. |
+| [`pi-exchange-stats`](extensions/exchange-stats) | Timing and cost for each exchange, in the status line and an exchange card. Folds each run of thinking and tool calls into one process line, with per-block titles and Pi's native output one toggle away. |
 
 ## Install
 
@@ -46,7 +47,7 @@ Settings resolve in this order, with later sources winning:
 Each value carries the source it came from, so a package can tell you not just what a
 setting is but where it came from. See each package's README for its own settings table.
 
-The config files are named per package — note that one of them does not follow the
+The config files are named per package — note that two of them do not follow the
 package name:
 
 | package | config file |
@@ -54,7 +55,7 @@ package name:
 | `pi-prefix-stabilizer` | `pi-prefix-stabilizer.json` |
 | `pi-compaction-cache` | `compaction-cache.json` |
 | `pi-cmem` | `pi-cmem.json` |
-| `pi-exchange-stats` | none — it reads only what pi supplies |
+| `pi-exchange-stats` | `exchange-stats.json` |
 
 ## Behaviour when something is missing
 
