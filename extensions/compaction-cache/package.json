@@ -1,6 +1,6 @@
 {
   "name": "pi-compaction-cache",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Make Pi compaction reuse the server's KV prefix cache.",
   "type": "module",
   "main": "./compaction-cache.js",
