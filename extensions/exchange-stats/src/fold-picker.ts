@@ -1,5 +1,6 @@
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ToolFoldModel } from "./tool-fold.ts";
+import { fitThinkingLine } from "./thinking-width.ts";
 
 type Theme = { fg(color: "dim", text: string): string; bg(color: "customMessageBg", text: string): string };
 
@@ -62,7 +63,7 @@ export class FoldPicker {
 		this.selected = Math.min(this.selected, rows.length - 1);
 		return [...lines, ...rows.map((row, index) => {
 			const mark = index === this.selected ? ">" : " ";
-			return fit(mark + theme.fg("dim", truncateToWidth(` ${row.label}`, Math.max(0, width - 1), "…")));
+			return fit(mark + theme.fg("dim", fitThinkingLine(` ${row.label}`, Math.max(0, width - 1))));
 		}), border];
 	}
 

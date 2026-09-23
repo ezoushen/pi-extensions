@@ -3,6 +3,8 @@ import test from "node:test";
 import { AssistantMessageComponent, initTheme } from "@earendil-works/pi-coding-agent";
 import { ToolFoldModel } from "./src/tool-fold.ts";
 import { installThinkingFold } from "./src/tool-render.ts";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { FoldPicker } from "./src/fold-picker.ts";
 
 initTheme("dark");
 
@@ -148,4 +150,55 @@ test("empty thinking content adds no title or blank line", () => {
 		try { assert.deepEqual(folded.render(80), native.render(80)); }
 		finally { restore(); }
 	}
+});
+
+test("a long headline clips at 40 columns while duration and stats remain", () => {
+	let now = 0;
+	const model = new ToolFoldModel(() => now);
+	const trace = "Checking the extraordinarily lengthy configuration statement before using the result.";
+	const message = { role: "assistant", timestamp: 400, content: [{ type: "thinking", thinking: trace }], stopReason: "stop" };
+	model.observeThinking(message, { type: "thinking_delta", contentIndex: 0, delta: trace });
+	model.ingest(message);
+	model.toggleProcess(model.processes()[0].id);
+	const { folded, restore } = mount(message, model);
+	try {
+		now = 1200;
+		model.settleThinking({ timestamp: 400 });
+		folded.updateContent({ ...message, content: [{ ...message.content[0] }] }, false);
+		const lines = folded.render(40);
+		assert.match(lines.join("\n").replace(/\x1b\[[0-9;]*m/g, ""), /◈ Checking.*… · 1\.2s · \d+ words/);
+		assert.ok(lines.every((line) => visibleWidth(line) <= 40));
+	} finally { restore(); }
+});
+
+test("CJK headline selects the last full sentence and fits the title width", () => {
+	const model = new ToolFoldModel(() => 0);
+	const trace = "正在检查配置文件。下一步还在输入";
+	const message = { role: "assistant", timestamp: 401, content: [{ type: "thinking", thinking: trace }], stopReason: "stop" };
+	model.observeThinking(message, { type: "thinking_delta", contentIndex: 0, delta: trace });
+	model.ingest(message);
+	model.toggleProcess(model.processes()[0].id);
+	const { folded, restore } = mount(message, model);
+	try {
+		model.settleThinking({ timestamp: 401 });
+		folded.updateContent({ ...message, content: [{ ...message.content[0] }] }, false);
+		const lines = folded.render(40);
+		assert.match(lines.join("\n"), /◈ 正在检查配置文件。 · /);
+		assert.doesNotMatch(lines.join("\n"), /下一步还在输入/);
+		assert.ok(lines.every((line) => visibleWidth(line) <= 40));
+	} finally { restore(); }
+});
+
+test("live process and picker rows use the same completed headline", () => {
+	const model = new ToolFoldModel(() => 1000);
+	const trace = "Checked the configuration.\nStill reading";
+	const message = { role: "assistant", timestamp: 402, content: [{ type: "thinking", thinking: trace }], stopReason: "stop" };
+	model.observeThinking(message, { type: "thinking_delta", contentIndex: 0, delta: trace });
+	model.ingest(message);
+	assert.match(model.processLine(model.processes()[0].id), /◈ Checked the configuration\. · /);
+	const theme = { fg(_color, text) { return text; }, bg(_color, text) { return text; } };
+	const picker = new FoldPicker(model, () => theme, () => {}, () => {});
+	const rows = picker.render(80);
+	assert.ok(rows.some((line) => line.includes("Checked the configuration.")));
+	assert.ok(picker.render(40).every((line) => visibleWidth(line) === 40));
 });

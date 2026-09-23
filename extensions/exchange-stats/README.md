@@ -6,7 +6,9 @@ as one process line, even when it spans assistant messages or turns. The line sh
 block counts and total wall time, or the current block and its live time while
 streaming. At the next fold level, each block has a one-line title in stream order.
 Tool titles show the argument, status, duration, and result line count. Thinking
-titles show elapsed time, thinking tokens and rate while streaming; a `~` marks
+titles show the trace's last complete sentence, or `Thinking` until one completes.
+The headline is shortened first to make room for duration and stats.
+Titles also show elapsed time, thinking tokens and rate while streaming; a `~` marks
 token estimates when the provider has not reported reasoning usage. Settled titles
 show duration and word count. Opening a thinking block shows Pi's full trace,
 regardless of Pi's hide-thinking setting. Process lines and block titles use the

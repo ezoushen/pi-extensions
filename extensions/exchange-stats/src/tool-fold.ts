@@ -36,6 +36,18 @@ function elapsed(ms: number): string {
 	return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
+function headline(trace: string): string {
+	const plain = trace.replace(/^\s*(?:[-*+]|\d+\.)\s+/gm, "").replace(/\*\*|`/g, "");
+	let start = 0;
+	let last = "Thinking";
+	for (const end of plain.matchAll(/[.?!。]+|\r?\n/g)) {
+		const sentence = plain.slice(start, end.index + end[0].length).trim().replace(/\s+/g, " ");
+		if (sentence) last = sentence;
+		start = end.index + end[0].length;
+	}
+	return last;
+}
+
 /** Holds display timing for each thinking content item in an assistant message. */
 class ThinkingFoldModel {
 	private blocks = new Map<number, Map<number, ThinkingBlock>>();
@@ -91,14 +103,15 @@ class ThinkingFoldModel {
 	title(message: ThinkingMessage, index: number, trace: string, streaming: boolean): string {
 		const block = this.forMessage(message, false)?.get(index);
 		const ms = block ? Math.max(0, (block.endedAt ?? this.now()) - block.startedAt) : 0;
+		const label = headline(trace);
 		if (!streaming || block?.endedAt !== undefined) {
 			const words = trace.trim().split(/\s+/).filter(Boolean).length;
-			return `◈ Thinking · ${elapsed(ms)} · ${words} ${words === 1 ? "word" : "words"}`;
+			return `◈ ${label} · ${elapsed(ms)} · ${words} ${words === 1 ? "word" : "words"}`;
 		}
 		const count = block?.tokens ?? Math.max(1, Math.ceil((block?.characters ?? trace.length) / 4));
 		const prefix = block?.tokens === undefined ? "~" : "";
 		const rate = ms > 0 ? Math.round(count / (ms / 1000)) : 0;
-		return `◈ Thinking · ${elapsed(ms)} · ${prefix}${count} tok · ${prefix}${rate} tok/s`;
+		return `◈ ${label} · ${elapsed(ms)} · ${prefix}${count} tok · ${prefix}${rate} tok/s`;
 	}
 
 	timing(message: ThinkingMessage, index: number): { start: number; end?: number } | undefined {
