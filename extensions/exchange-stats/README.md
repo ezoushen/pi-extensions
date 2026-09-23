@@ -3,6 +3,10 @@
 Show timing, token, cache, cost, and tool-use statistics for each Pi exchange.
 Tool calls render as one-line titles with their argument, status, duration, and
 result line count.
+Thinking runs render as one-line titles. While streaming, each title shows elapsed
+time, thinking tokens and rate; a `~` marks token estimates when the provider has
+not reported reasoning usage. Settled titles show duration and word count. Opening
+a thinking title shows Pi's full trace, regardless of Pi's hide-thinking setting.
 
 An **exchange** is one uninterrupted work span from a submitted prompt until Pi has
 nothing left to do automatically. A **turn** is one model response plus the tools it
@@ -18,17 +22,25 @@ Run `/exstats` to append a cumulative session card.
 
 Pi must emit its documented session, agent, turn, tool, and UI-prompt lifecycle events.
 Tool folding uses Pi's `ToolExecutionComponent.render` interface from version 0.87.1.
+Thinking folding uses `AssistantMessageComponent.updateContent` and Pi's
+`message_update` events. Its clock starts at the first thinking delta and stops
+at `thinking_end`, the first following non-thinking event, or message end,
+whichever comes first.
 Assistant messages should include usage and cost fields when the provider supports
 them. No network service or machine-local file is required.
 
 ## If the contract is unmet
 
-Missing usage fields are reported as zero; the extension does not invent token or cost
-data. Missing lifecycle events produce an incomplete or absent span. When UI status is
+Missing usage fields are reported as zero for exchange totals; the extension does
+not invent exchange token or cost data. Thinking estimates are explicitly marked
+with `~`.
+Missing lifecycle events produce an incomplete or absent span. When UI status is
 unavailable, status updates are skipped. If custom-entry persistence is unavailable,
 the live status can still update and the agent turn continues. If Pi no longer
 provides the tool render interface, a single warning is shown and tool rows use
 Pi's native renderer; exchange stats continue.
+If Pi no longer provides the assistant content interface, a single warning is
+shown and thinking uses Pi's native rendering.
 
 The measurements are process-local. They do not claim provider-side queue time,
 exclusive model compute time, or billing beyond the usage object Pi received.
@@ -44,7 +56,9 @@ from Pi-provided events and context.
 pi install npm:pi-exchange-stats
 ```
 
-Submit a prompt that makes at least one tool call and wait for Pi to settle.
+Submit a prompt that makes at least one tool call and produces thinking, then wait
+for Pi to settle. Check that the thinking title counts while live and keeps its
+final duration and word count.
 Check that the tool title shows its status, duration, and result line count. Expand the
 exchange card and verify that its turn count, output tokens, tool names, and wall-time
 breakdown match the transcript. Run `/exstats` and confirm that the session card equals
