@@ -6,3 +6,7 @@ extensions/*/*.tgz
 # Matched generically: extensions name these directories after themselves.
 .pi/
 .pi-*/
+
+# Automattic effort state and worktrees.
+.scratch/
+.worktrees/
