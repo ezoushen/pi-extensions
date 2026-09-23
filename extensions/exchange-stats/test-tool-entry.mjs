@@ -37,6 +37,8 @@ test("session shutdown restores the component render prototype identity", () => 
 	class StubTool { render() { return ["native"]; } }
 	const original = StubTool.prototype.render;
 	const mounted = mount(StubTool);
+	assert.equal(StubTool.prototype.render, original);
+	mounted.handlers.get("session_start")({}, mounted.ctx);
 	assert.notEqual(StubTool.prototype.render, original);
 	mounted.handlers.get("session_shutdown")();
 	assert.equal(StubTool.prototype.render, original);
@@ -67,6 +69,7 @@ test("Pi message events drive thinking titles and shutdown restores the componen
 	const mounted = mount(ToolExecutionComponent);
 	const message = { role: "assistant", content: [{ type: "thinking", thinking: "checking the answer" }], stopReason: "stop" };
 	try {
+		mounted.handlers.get("session_start")({}, mounted.ctx);
 		mounted.handlers.get("message_update")({ message, assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "checking the answer" } }, mounted.ctx);
 		const component = new AssistantMessageComponent();
 		component.updateContent(message, true);
