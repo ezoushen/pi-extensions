@@ -21,6 +21,12 @@ interface TitleTheme {
 	fg(color: "dim" | "accent", text: string): string;
 }
 
+type Patch = { installed: boolean; restore: () => void };
+type ToolOwner = { model: ToolFoldModel; getTheme: () => TitleTheme | undefined; getOutputPad: () => number; getHomeDirectory: () => string };
+type ThinkingOwner = { model: ToolFoldModel; getTheme: () => TitleTheme | undefined; requestRender: () => void; observeOutputPad: (padding: number) => void };
+const toolOwners = new WeakMap<object, { add: (owner: ToolOwner) => Patch }>();
+const thinkingOwners = new WeakMap<object, { add: (owner: ThinkingOwner) => Patch }>();
+
 function truncateProcessLine(text: string, width: number): string {
 	return fitThinkingLine(text, width);
 }
@@ -47,15 +53,18 @@ function pathTail(path: string, width: number): string {
 	return result;
 }
 
-/** Installs a reversible display wrapper; unsupported Pi components stay native. */
+/** Shares a session-owned display wrapper; unsupported Pi components stay native. */
 export function installToolFold(componentClass: ToolClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined, getOutputPad: () => number = () => 1, getHomeDirectory: () => string = homedir): { installed: boolean; restore: () => void } {
 	const prototype = componentClass?.prototype;
+	const shared = prototype && toolOwners.get(prototype);
+	if (shared) return shared.add({ model, getTheme, getOutputPad, getHomeDirectory });
 	const original = prototype?.render;
 	const originalMouse = prototype?.handleMouse;
 	const hadOwnMouse = prototype && Object.hasOwn(prototype, "handleMouse");
 	if (typeof original !== "function") return { installed: false, restore() {} };
 
 	function folded(this: ToolComponent, width: number): string[] {
+		if (owners.size === 0) return original.call(this, width);
 		try {
 			model.observe(this.toolCallId, this.toolName, this.args, this.result);
 			const process = model.processForTool(this.toolCallId);
@@ -89,6 +98,7 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 
 	prototype.render = folded;
 	function foldedMouse(this: ToolComponent, event: { type: string; button: string; y: number; width: number; height: number }) {
+		if (owners.size === 0) return originalMouse?.call(this, event);
 		const process = model.processForTool(this.toolCallId);
 		if (event.type === "click" && event.button === "left" && event.y === 0 && process && model.isProcessLead(process.id, `tool:${this.toolCallId}`)) {
 			model.toggleProcess(process.id);
@@ -105,13 +115,29 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 		return originalMouse?.call(this, event);
 	}
 	prototype.handleMouse = foldedMouse;
-	return { installed: true, restore() {
-		if (prototype.render === folded) prototype.render = original;
-		if (prototype.handleMouse === foldedMouse) {
-			if (hadOwnMouse) prototype.handleMouse = originalMouse;
-			else delete prototype.handleMouse;
+	const owners = new Set<ToolOwner>();
+	const add = (owner: ToolOwner): Patch => {
+		if (owners.size === 0) {
+			if (prototype.render === original) prototype.render = folded;
+			if (prototype.handleMouse === originalMouse) prototype.handleMouse = foldedMouse;
 		}
-	} };
+		owners.add(owner);
+		({ model, getTheme, getOutputPad, getHomeDirectory } = owner);
+		return { installed: true, restore() {
+			if (!owners.delete(owner)) return;
+			const latest = Array.from(owners).at(-1);
+			if (latest) { ({ model, getTheme, getOutputPad, getHomeDirectory } = latest); return; }
+			// A later wrapper may still call ours; keep it dormant and reusable while attached.
+			if (prototype.render === folded && prototype.handleMouse === foldedMouse) toolOwners.delete(prototype);
+			if (prototype.render === folded) prototype.render = original;
+			if (prototype.handleMouse === foldedMouse) {
+				if (hadOwnMouse) prototype.handleMouse = originalMouse;
+				else delete prototype.handleMouse;
+			}
+		} };
+	};
+	toolOwners.set(prototype, { add });
+	return add({ model, getTheme, getOutputPad, getHomeDirectory });
 }
 
 
@@ -133,9 +159,11 @@ interface AssistantClass {
 	prototype: AssistantComponent;
 }
 
-/** Replaces only Pi's thinking children and keeps its text rendering in place. */
+/** Shares a session-owned wrapper that replaces only thinking children and keeps text in place. */
 export function installThinkingFold(componentClass: AssistantClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined, requestRender: () => void = () => {}, observeOutputPad: (padding: number) => void = () => {}): { installed: boolean; restore: () => void } {
 	const prototype = componentClass?.prototype;
+	const shared = prototype && thinkingOwners.get(prototype);
+	if (shared) return shared.add({ model, getTheme, requestRender, observeOutputPad });
 	const original = prototype?.updateContent;
 	if (typeof original !== "function") return { installed: false, restore() {} };
 
@@ -215,6 +243,7 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 	}
 
 	function folded(this: AssistantComponent, message: Message, isStreaming?: boolean): void {
+		if (owners.size === 0) { original.call(this, message, isStreaming); return; }
 		try {
 			foldContent.call(this, message, isStreaming);
 		} catch {
@@ -223,5 +252,19 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 	}
 
 	prototype.updateContent = folded;
-	return { installed: true, restore() { if (prototype.updateContent === folded) prototype.updateContent = original; } };
+	const owners = new Set<ThinkingOwner>();
+	const add = (owner: ThinkingOwner): Patch => {
+		owners.add(owner);
+		({ model, getTheme, requestRender, observeOutputPad } = owner);
+		return { installed: true, restore() {
+			if (!owners.delete(owner)) return;
+			const latest = Array.from(owners).at(-1);
+			if (latest) { ({ model, getTheme, requestRender, observeOutputPad } = latest); return; }
+			// A later wrapper may still call ours; keep it dormant and reusable while attached.
+			if (prototype.updateContent === folded) thinkingOwners.delete(prototype);
+			if (prototype.updateContent === folded) prototype.updateContent = original;
+		} };
+	};
+	thinkingOwners.set(prototype, { add });
+	return add({ model, getTheme, requestRender, observeOutputPad });
 }

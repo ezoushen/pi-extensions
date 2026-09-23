@@ -210,14 +210,15 @@ function unionMs(runs: ToolRun[]): number {
 }
 
 export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof ToolExecutionComponent = ToolExecutionComponent, settingsRuntime: SettingsRuntime = {}) {
-	const toolFold = new ToolFoldModel();
+	let toolFold = new ToolFoldModel();
 	let themeContext: { ui: { theme?: { fg(color: "dim" | "accent", text: string): string }; setStatus(key: string, value: string): void } } | undefined;
 	const getTitleTheme = () => themeContext?.ui.theme;
 	let outputPad = 1;
 	let lastStatus = "";
 	const requestRender = () => { if (themeContext) themeContext.ui.setStatus(STATUS_KEY, toolFold.cursorTitle() ? `${lastStatus} · Cursor ${toolFold.cursorTitle()}` : lastStatus); };
-	const toolPatch = installToolFold(toolComponent, toolFold, getTitleTheme, () => outputPad);
-	const thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold, getTitleTheme, requestRender, (padding) => { outputPad = padding; });
+	let toolPatch: ReturnType<typeof installToolFold> | undefined;
+	let thinkingPatch: ReturnType<typeof installThinkingFold> | undefined;
+	let sessionActive = false;
 	const resolvedKeys = resolveSettings("exchange-stats", FOLD_KEYS, {
 		cwd: process.cwd(), hasUI: true, isProjectTrusted: () => false,
 	}, settingsRuntime);
@@ -243,7 +244,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	let summaryScheduler: HeadlineScheduler | undefined;
 	let summarySession = 0;
 	let restoredEntries: FoldSessionEntry[] = [];
-	const sessionTotals = {
+	let sessionTotals = {
 		...emptyTotals(),
 		exchanges: 0,
 		turnCount: 0,
@@ -409,6 +410,16 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	// ---- Lifecycle ----
 
 	pi.on("session_start", (_event, ctx) => {
+		if (sessionActive) return;
+		sessionActive = true;
+		resetExchangeState();
+		toolFold = new ToolFoldModel();
+		outputPad = 1;
+		lastStatus = "";
+		restoredEntries = [];
+		sessionTotals = { ...emptyTotals(), exchanges: 0, turnCount: 0, durationMs: 0, toolMs: 0, waitingMs: 0 };
+		toolPatch = installToolFold(toolComponent, toolFold, getTitleTheme, () => outputPad);
+		thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold, getTitleTheme, requestRender, (padding) => { outputPad = padding; });
 		themeContext = ctx;
 		const session = ++summarySession;
 		summaryScheduler?.dispose();
@@ -453,19 +464,25 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			announce(ctx, "exchange-stats: thinking folding unavailable; Pi thinking remains native", "warning");
 			warnedAboutThinkingFold = true;
 		}
-		resetExchangeState();
 		restoreSession(ctx);
 		sessionStartedAt = Date.now();
 		setStatus("⏱ ready", ctx);
 	});
 
 	pi.on("session_shutdown", () => {
+		if (!sessionActive) return;
+		sessionActive = false;
 		themeContext = undefined;
+		toolFold.stopCursor();
 		summaryScheduler?.dispose();
 		summaryScheduler = undefined;
-		toolPatch.restore();
-		thinkingPatch.restore();
+		toolPatch?.restore();
+		thinkingPatch?.restore();
+		toolPatch = undefined;
+		thinkingPatch = undefined;
 		resetExchangeState();
+		toolFold = new ToolFoldModel();
+		restoredEntries = [];
 	});
 
 	pi.on("session_compact", (_event, ctx) => { restoreSession(ctx); requestRender(); });
