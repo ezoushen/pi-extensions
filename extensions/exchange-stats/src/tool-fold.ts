@@ -214,7 +214,12 @@ export class ToolFoldModel {
 		this.saved = saved;
 	}
 
-	/** Saves only display statistics; traces, tool arguments, and results stay in Pi messages. */
+	/**
+	 * Returns the saved display record of each block in the exchange: timing, status
+	 * and counts, plus each thinking block's headline. That headline is the model
+	 * summary or the trace's last complete sentence, so it can repeat trace text;
+	 * the rest of the trace, tool arguments and results stay in Pi messages.
+	 */
 	recordsForExchange(exchange: number): FoldBlockRecord[] {
 		return this.processList.filter((process) => process.exchange === exchange).flatMap((process) => process.blocks.map((block): FoldBlockRecord => {
 			if (block.kind === "thinking") return this.pendingThinking.get(block.key) ?? this.thinking.record(block.message, block.index, block.trace);
