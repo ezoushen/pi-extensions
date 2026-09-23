@@ -71,5 +71,13 @@ test("an exchange renders with only Pi-provided events and context", () => {
 	assert.match(rendered, /Exchange 1/);
 	assert.match(rendered, /out 7/);
 	assert.match(rendered, /\$0\.00420/);
+	for (const expanded of [false, true]) {
+		const colors = [];
+		const theme = { bg: (_name, value) => value, fg: (name, value) => { colors.push(name); return value; }, bold: (value) => value };
+		const lines = mounted.renderer()(mounted.entries[0], { expanded }, theme).render(100).join("\n");
+		assert.match(lines, /Exchange 1.*\n.*out 7.*\n.*in 11/s);
+		assert.doesNotMatch(lines, /#\s*1|expand|stop:|avg .* per turn/);
+		assert.equal(colors.every((color) => color === "dim"), true);
+	}
 	assert.match(mounted.statuses.at(-1).value, /out 7/);
 });
