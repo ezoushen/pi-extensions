@@ -254,6 +254,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	let warnedAboutToolFold = false;
 	let warnedAboutThinkingFold = false;
 	let summaryScheduler: HeadlineScheduler | undefined;
+	let summarySession = 0;
 	const sessionTotals = {
 		...emptyTotals(),
 		exchanges: 0,
@@ -414,6 +415,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 
 	pi.on("session_start", (_event, ctx) => {
 		themeContext = ctx;
+		const session = ++summarySession;
 		summaryScheduler?.dispose();
 		summaryScheduler = undefined;
 		const summaryValue = resolveSettings("exchange-stats", SUMMARY_SETTING, {
@@ -424,7 +426,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			const slash = configuredModel.indexOf("/");
 			const chosen = slash > 0 ? ctx.modelRegistry?.find(configuredModel.slice(0, slash), configuredModel.slice(slash + 1)) : undefined;
 			if (!chosen) {
-				announce(ctx, `exchange-stats: unknown summaryModel ${configuredModel}; using trace sentence`, "warning");
+				announce(ctx, `exchange-stats: unknown summaryModel ${configuredModel}; using trace sentence`, "warning", `exchange-stats:unknown-summary:${session}`);
 			} else {
 				summaryScheduler = new HeadlineScheduler({
 					summarize: async (trace, signal) => {
@@ -440,7 +442,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 						toolFold.setThinkingHeadline({ timestamp }, index, headline);
 						requestRender();
 					},
-					onFailure: (reason) => announce(ctx, `exchange-stats: headline summary ${reason === "timeout" ? "timed out" : "failed"}; using trace sentence`, "warning", "exchange-stats:headline-failure"),
+					onFailure: (reason) => announce(ctx, `exchange-stats: headline summary ${reason === "timeout" ? "timed out" : "failed"}; using trace sentence`, "warning", `exchange-stats:headline-failure:${session}`),
 				});
 			}
 		}
