@@ -100,7 +100,8 @@ The matching environment variables are `PI_EXCHANGE_STATS_PROCESS_KEY`,
 `PI_EXCHANGE_STATS_EXCHANGE_KEY`, `PI_EXCHANGE_STATS_PICKER_KEY`, and
 `PI_EXCHANGE_STATS_CURSOR_KEY`. Set `cursorMode` to the boolean `true` in the same
 file, or set `PI_EXCHANGE_STATS_CURSOR_MODE=true`, to register the cursor shortcut.
-It is off by default.
+It is off by default. A project's `.pi/exchange-stats.json` is not read for the keys
+or `cursorMode`, even in a trusted project.
 
 Set `summaryModel` to a `provider/modelId` registered in Pi's model registry.
 It is off by default. Put it in `<agentDir>/exchange-stats.json`, or in a trusted

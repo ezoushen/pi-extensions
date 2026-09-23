@@ -57,6 +57,11 @@ package name:
 | `pi-cmem` | `pi-cmem.json` |
 | `pi-exchange-stats` | `exchange-stats.json` |
 
+`pi-exchange-stats` is the exception to step 4: its fold keys and `cursorMode` come only
+from the file in your pi agent directory and their environment variables. Only
+`summaryModel` also reads `<project>/.pi/exchange-stats.json`, and only when the project
+is trusted.
+
 ## Behaviour when something is missing
 
 None of these four is correctness-critical, so none of them takes a session down. A
