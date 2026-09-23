@@ -111,15 +111,22 @@ reasoning off and a 32 token output cap. The model call never delays the turn or
 the trace; with the setting absent or an unknown model, titles use the trace
 sentence.
 
-The summary model must honor Pi's reasoning `off` level. For a reasoning model
-whose provider needs `none` to disable thinking, add this field to that model's
-entry in Pi's `models.json`:
+The summary model must honor Pi's reasoning `off` level. Set
+`thinkingLevelMap.off` in that model's Pi `models.json` entry to the provider's
+own value for disabling thinking. For a provider that uses `none`, for example:
 
 ```json
 { "thinkingLevelMap": { "off": "none" } }
 ```
 
 Without it, a model may spend the 32 token cap reasoning and return no headline.
+
+For a development install, do not load this package from a path whose
+`node_modules` contains its own `@earendil-works/pi-*` packages. That path makes
+the display patch land on those private component classes rather than the classes
+used by the running Pi. Stage the built package files outside such a tree, or
+`npm pack` this package and install the tarball with
+`pi install npm:pi-exchange-stats@file:/absolute/path/to/pi-exchange-stats-0.1.0.tgz`.
 
 ## Install and verify
 
