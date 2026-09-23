@@ -179,6 +179,7 @@ function lineCount(result?: ToolBlock["result"]): number {
 export class ToolFoldModel {
 	private blocks = new Map<string, ToolBlock>();
 	private processList: Process[] = [];
+	private processById = new Map<string, Process>();
 	private processByBlock = new Map<string, Process>();
 	private seenContent = new Map<number, Set<number>>();
 	private openProcess?: Process;
@@ -200,6 +201,7 @@ export class ToolFoldModel {
 	clear(saved?: (id: string) => FoldBlockRecord | undefined): void {
 		this.blocks.clear();
 		this.processList = [];
+		this.processById.clear();
 		this.processByBlock.clear();
 		this.seenContent.clear();
 		this.openProcess = undefined;
@@ -265,6 +267,7 @@ export class ToolFoldModel {
 		if (!this.openProcess) {
 			this.openProcess = { id: block.key, exchange: Math.max(1, this.currentExchange), blocks: [], open: false };
 			this.processList.push(this.openProcess);
+			this.processById.set(this.openProcess.id, this.openProcess);
 		}
 		this.openProcess.blocks.push(block);
 		this.processByBlock.set(block.key, this.openProcess);
@@ -337,14 +340,14 @@ export class ToolFoldModel {
 	ownsTool(id: string): boolean { return this.processByBlock.has(`tool:${id}`) || this.blocks.has(id); }
 	/** Whether this model has ingested the assistant message, so its session owns the component. */
 	ownsMessage(message: ThinkingMessage): boolean { return typeof message?.timestamp === "number" && this.seenContent.has(message.timestamp); }
-	isProcessLead(id: string, key: string): boolean { return this.processList.find((process) => process.id === id)?.blocks[0]?.key === key; }
+	isProcessLead(id: string, key: string): boolean { return this.processById.get(id)?.blocks[0]?.key === key; }
 	toggleProcess(id: string): boolean | undefined {
-		const process = this.processList.find((item) => item.id === id);
+		const process = this.processById.get(id);
 		if (!process) return undefined;
 		process.open = !process.open;
 		return process.open;
 	}
-	isProcessOpen(id: string): boolean { return this.processList.find((item) => item.id === id)?.open ?? false; }
+	isProcessOpen(id: string): boolean { return this.processById.get(id)?.open ?? false; }
 	toggleThinking(message: ThinkingMessage, index: number): boolean {
 		const key = `thinking:${message.timestamp}:${index}`;
 		if (this.openThinking.has(key)) { this.openThinking.delete(key); return false; }
@@ -354,7 +357,7 @@ export class ToolFoldModel {
 	isThinkingOpen(message: ThinkingMessage, index: number): boolean { return this.openThinking.has(`thinking:${message.timestamp}:${index}`); }
 
 	processLine(id: string): string {
-		const process = this.processList.find((item) => item.id === id);
+		const process = this.processById.get(id);
 		if (!process) return "";
 		let first: number | undefined;
 		let last: number | undefined;
