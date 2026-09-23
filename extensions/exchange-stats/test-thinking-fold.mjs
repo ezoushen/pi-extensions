@@ -1,0 +1,37 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { ToolFoldModel } from "./src/tool-fold.ts";
+
+test("the first visible event freezes thinking time when thinking_end arrives late", () => {
+	let now = 0;
+	const model = new ToolFoldModel(() => now);
+	const message = { content: [{ type: "thinking", thinking: "First thought" }, { type: "text", text: "Answer" }] };
+	model.observeThinking(message, { type: "thinking_delta", contentIndex: 0, delta: "First thought" });
+	now = 3000;
+	model.observeThinking(message, { type: "text_start", contentIndex: 1 });
+	now = 9000;
+	model.observeThinking(message, { type: "thinking_end", contentIndex: 0 });
+	assert.match(model.thinkingTitle(message, 0, "First thought", false), /Thinking.*3\.0s.*2 words/);
+});
+
+test("live thinking uses an explicitly marked estimate when usage is absent", () => {
+	let now = 0;
+	const model = new ToolFoldModel(() => now);
+	const message = { content: [{ type: "thinking", thinking: "" }] };
+	model.observeThinking(message, { type: "thinking_delta", contentIndex: 0, delta: "one two three four" });
+	const first = model.thinkingTitle(message, 0, "one two three four", true);
+	now = 1000;
+	model.observeThinking(message, { type: "thinking_delta", contentIndex: 0, delta: " five six seven eight" });
+	const second = model.thinkingTitle(message, 0, "one two three four five six seven eight", true);
+	assert.match(first, /0ms.*~\d+ tok/);
+	assert.match(second, /1\.0s.*~\d+ tok.*tok\/s/);
+	assert.notEqual(first, second);
+});
+
+test("reported reasoning usage is shown as measured tokens", () => {
+	const model = new ToolFoldModel(() => 1000);
+	const message = { content: [{ type: "thinking", thinking: "thought" }] };
+	model.observeThinking(message, { type: "thinking_delta", contentIndex: 0, delta: "thought" }, 17);
+	assert.match(model.thinkingTitle(message, 0, "thought", true), /17 tok · 0 tok\/s/);
+	assert.doesNotMatch(model.thinkingTitle(message, 0, "thought", true), /~/);
+});

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerExchangeStats } from "./exchange-stats.ts";
-import { ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
+import { AssistantMessageComponent, ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
 
 function mount(componentClass) {
 	const handlers = new Map();
@@ -58,4 +58,21 @@ test("Pi tool events drive a real component title", () => {
 		assert.equal(lines.length, 1);
 		assert.match(lines[0], /bash.*pwd.*✓.*2 lines/);
 	} finally { mounted.handlers.get("session_shutdown")(); }
+});
+
+test("Pi message events drive thinking titles and shutdown restores the component", () => {
+	initTheme("dark");
+	const original = AssistantMessageComponent.prototype.updateContent;
+	const mounted = mount(ToolExecutionComponent);
+	const message = { role: "assistant", content: [{ type: "thinking", thinking: "checking the answer" }], stopReason: "stop" };
+	try {
+		mounted.handlers.get("message_update")({ message, assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "checking the answer" } }, mounted.ctx);
+		const component = new AssistantMessageComponent();
+		component.updateContent(message, true);
+		assert.match(component.render(80).join("\n"), /Thinking.*~\d+ tok/);
+		mounted.handlers.get("message_end")({ message }, mounted.ctx);
+		component.updateContent(message, false);
+		assert.match(component.render(80).join("\n"), /Thinking.*3 words/);
+	} finally { mounted.handlers.get("session_shutdown")(); }
+	assert.equal(AssistantMessageComponent.prototype.updateContent, original);
 });

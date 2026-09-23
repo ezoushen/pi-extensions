@@ -1,5 +1,5 @@
 /**
- * exchange-stats.ts — exchange timing and cost, with one-line tool titles.
+ * exchange-stats.ts — exchange timing and cost, with one-line tool and thinking titles.
  * Per-turn card detail remains available on demand.
  *
  * An *exchange* is one uninterrupted work span: from a prompt you submitted until
@@ -44,10 +44,10 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { keyHint, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import { AssistantMessageComponent, keyHint, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { announce } from "../../shared/announce.ts";
 import { ToolFoldModel } from "./src/tool-fold.ts";
-import { installToolFold } from "./src/tool-render.ts";
+import { installThinkingFold, installToolFold } from "./src/tool-render.ts";
 import { Box, Text } from "@earendil-works/pi-tui";
 
 const ENTRY_TYPE = "exchange-stats";
@@ -219,7 +219,9 @@ function unionMs(runs: ToolRun[]): number {
 export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof ToolExecutionComponent = ToolExecutionComponent) {
 	const toolFold = new ToolFoldModel();
 	const toolPatch = installToolFold(toolComponent, toolFold);
+	const thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold);
 	let warnedAboutToolFold = false;
+	let warnedAboutThinkingFold = false;
 	const sessionTotals = {
 		...emptyTotals(),
 		exchanges: 0,
@@ -371,6 +373,10 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			announce(ctx, "exchange-stats: tool folding unavailable; Pi tool rows remain native", "warning");
 			warnedAboutToolFold = true;
 		}
+		if (!thinkingPatch.installed && !warnedAboutThinkingFold) {
+			announce(ctx, "exchange-stats: thinking folding unavailable; Pi thinking remains native", "warning");
+			warnedAboutThinkingFold = true;
+		}
 		resetExchangeState();
 		sessionStartedAt = Date.now();
 		setStatus("⏱ ready", ctx);
@@ -378,7 +384,17 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 
 	pi.on("session_shutdown", () => {
 		toolPatch.restore();
+		thinkingPatch.restore();
 		resetExchangeState();
+	});
+
+	pi.on("message_update", (event) => {
+		if (event.message.role !== "assistant") return;
+		toolFold.observeThinking(event.message, event.assistantMessageEvent, event.message.usage?.reasoning);
+	});
+
+	pi.on("message_end", (event) => {
+		if (event.message.role === "assistant") toolFold.settleThinking(event.message);
 	});
 
 	pi.on("before_agent_start", (_event, ctx) => {
