@@ -46,6 +46,7 @@ import { AssistantMessageComponent, ToolExecutionComponent } from "@earendil-wor
 import { announce } from "../../shared/announce.ts";
 import { resolveSettings, type SettingsRuntime } from "../../shared/settings.ts";
 import { FoldPicker } from "./src/fold-picker.ts";
+import { TranscriptCursor } from "./src/transcript-cursor.ts";
 import { HeadlineScheduler } from "./src/headline-scheduler.ts";
 import { ToolFoldModel, type FoldBlockRecord } from "./src/tool-fold.ts";
 import { installThinkingFold, installToolFold } from "./src/tool-render.ts";
@@ -62,7 +63,9 @@ const FOLD_KEYS = {
 	processKey: { default: "ctrl+alt+f", env: "PI_EXCHANGE_STATS_PROCESS_KEY" },
 	exchangeKey: { default: "ctrl+alt+e", env: "PI_EXCHANGE_STATS_EXCHANGE_KEY" },
 	pickerKey: { default: "ctrl+alt+s", env: "PI_EXCHANGE_STATS_PICKER_KEY" },
+	cursorKey: { default: "ctrl+alt+g", env: "PI_EXCHANGE_STATS_CURSOR_KEY" },
 } as const;
+const CURSOR_SETTING = { cursorMode: { default: false, env: "PI_EXCHANGE_STATS_CURSOR_MODE", parseEnv: (value: string) => value === "true" } } as const;
 const SUMMARY_SETTING = { summaryModel: { default: "", env: "PI_EXCHANGE_STATS_SUMMARY_MODEL" } } as const;
 
 interface TokenTotals {
@@ -208,15 +211,18 @@ function unionMs(runs: ToolRun[]): number {
 
 export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof ToolExecutionComponent = ToolExecutionComponent, settingsRuntime: SettingsRuntime = {}) {
 	const toolFold = new ToolFoldModel();
-	let themeContext: { ui: { theme?: { fg(color: "dim", text: string): string }; setStatus(key: string, value: string): void } } | undefined;
+	let themeContext: { ui: { theme?: { fg(color: "dim" | "accent", text: string): string }; setStatus(key: string, value: string): void } } | undefined;
 	const getTitleTheme = () => themeContext?.ui.theme;
 	let lastStatus = "";
-	const requestRender = () => { if (themeContext) themeContext.ui.setStatus(STATUS_KEY, lastStatus); };
+	const requestRender = () => { if (themeContext) themeContext.ui.setStatus(STATUS_KEY, toolFold.cursorTitle() ? `${lastStatus} · Cursor ${toolFold.cursorTitle()}` : lastStatus); };
 	const toolPatch = installToolFold(toolComponent, toolFold, getTitleTheme);
 	const thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold, getTitleTheme, requestRender);
 	const resolvedKeys = resolveSettings("exchange-stats", FOLD_KEYS, {
 		cwd: process.cwd(), hasUI: true, isProjectTrusted: () => false,
 	}, settingsRuntime);
+	const cursorMode = resolveSettings("exchange-stats", CURSOR_SETTING, {
+		cwd: process.cwd(), hasUI: true, isProjectTrusted: () => false,
+	}, settingsRuntime).cursorMode.value === true;
 	const validKey = (value: unknown): value is KeyId => {
 		if (typeof value !== "string") return false;
 		const parts = value.split("+");
@@ -266,7 +272,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	function setStatus(text: string, ctx: StatusContext): void {
 		if (!ctx.hasUI) return;
 		lastStatus = text;
-		ctx.ui.setStatus(STATUS_KEY, text);
+		ctx.ui.setStatus(STATUS_KEY, toolFold.cursorTitle() ? `${text} · Cursor ${toolFold.cursorTitle()}` : text);
 	}
 
 	pi.registerShortcut(keys.processKey, { description: "Toggle latest process", handler: (ctx) => {
@@ -278,6 +284,17 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	pi.registerShortcut(keys.pickerKey, { description: "Choose exchange, process or block to fold", handler: async (ctx) => {
 		if (!ctx.hasUI) return;
 		await ctx.ui.custom((tui, theme, _keybindings, done) => new FoldPicker(toolFold, () => ctx.ui.theme ?? theme, () => tui.requestRender(), () => done(undefined)), { overlay: true });
+	} });
+	if (cursorMode) pi.registerShortcut(keys.cursorKey, { description: "Move through transcript folds", handler: async (ctx) => {
+		if (!ctx.hasUI || !toolFold.startCursor()) return;
+		themeContext = ctx;
+		requestRender();
+		try {
+			await ctx.ui.custom((_tui, _theme, _keybindings, done) => new TranscriptCursor(toolFold, requestRender, () => done(undefined)), { overlay: true });
+		} finally {
+			toolFold.stopCursor();
+			requestRender();
+		}
 	} });
 
 	/** Live line: elapsed, turns finished, and the tool currently running. */
