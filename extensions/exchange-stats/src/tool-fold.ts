@@ -9,6 +9,7 @@ interface ThinkingBlock {
 	endedAt?: number;
 	characters: number;
 	tokens?: number;
+	headline?: string;
 }
 
 interface ThinkingMessage {
@@ -101,10 +102,15 @@ class ThinkingFoldModel {
 		}
 	}
 
+	setHeadline(message: ThinkingMessage, index: number, headline: string | undefined): void {
+		const block = this.forMessage(message, false)?.get(index);
+		if (block) block.headline = headline;
+	}
+
 	title(message: ThinkingMessage, index: number, trace: string, streaming: boolean): string {
 		const block = this.forMessage(message, false)?.get(index);
 		const ms = block ? Math.max(0, (block.endedAt ?? this.now()) - block.startedAt) : 0;
-		const label = headline(trace, streaming && block?.endedAt === undefined);
+		const label = block?.headline ?? headline(trace, streaming && block?.endedAt === undefined);
 		if (!streaming || block?.endedAt !== undefined) {
 			const words = trace.trim().split(/\s+/).filter(Boolean).length;
 			return `◈ ${label} · ${elapsed(ms)} · ${words} ${words === 1 ? "word" : "words"}`;
@@ -311,6 +317,10 @@ export class ToolFoldModel {
 
 	thinkingTitle(message: ThinkingMessage, index: number, trace: string, streaming: boolean): string {
 		return this.thinking.title(message, index, trace, streaming);
+	}
+
+	setThinkingHeadline(message: ThinkingMessage, index: number, headline: string | undefined): void {
+		this.thinking.setHeadline(message, index, headline);
 	}
 
 	toggle(id: string): boolean | undefined {

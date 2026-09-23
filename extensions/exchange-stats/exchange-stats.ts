@@ -48,6 +48,7 @@ import { AssistantMessageComponent, keyHint, ToolExecutionComponent } from "@ear
 import { announce } from "../../shared/announce.ts";
 import { resolveSettings, type SettingsRuntime } from "../../shared/settings.ts";
 import { FoldPicker } from "./src/fold-picker.ts";
+import { HeadlineScheduler } from "./src/headline-scheduler.ts";
 import { ToolFoldModel } from "./src/tool-fold.ts";
 import { installThinkingFold, installToolFold } from "./src/tool-render.ts";
 import { Box, Text } from "@earendil-works/pi-tui";
@@ -64,6 +65,7 @@ const FOLD_KEYS = {
 	exchangeKey: { default: "ctrl+alt+e", env: "PI_EXCHANGE_STATS_EXCHANGE_KEY" },
 	pickerKey: { default: "ctrl+alt+s", env: "PI_EXCHANGE_STATS_PICKER_KEY" },
 } as const;
+const SUMMARY_SETTING = { summaryModel: { default: "", env: "PI_EXCHANGE_STATS_SUMMARY_MODEL" } } as const;
 
 interface TokenTotals {
 	input: number;
@@ -251,6 +253,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	let warnedAboutKey = false;
 	let warnedAboutToolFold = false;
 	let warnedAboutThinkingFold = false;
+	let summaryScheduler: HeadlineScheduler | undefined;
 	const sessionTotals = {
 		...emptyTotals(),
 		exchanges: 0,
@@ -411,6 +414,36 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 
 	pi.on("session_start", (_event, ctx) => {
 		themeContext = ctx;
+		summaryScheduler?.dispose();
+		summaryScheduler = undefined;
+		const summaryValue = resolveSettings("exchange-stats", SUMMARY_SETTING, {
+			cwd: ctx.cwd ?? process.cwd(), hasUI: ctx.hasUI, isProjectTrusted: () => ctx.isProjectTrusted?.() ?? false,
+		}, settingsRuntime).summaryModel.value;
+		const configuredModel = typeof summaryValue === "string" ? summaryValue.trim() : "";
+		if (configuredModel) {
+			const slash = configuredModel.indexOf("/");
+			const chosen = slash > 0 ? ctx.modelRegistry?.find(configuredModel.slice(0, slash), configuredModel.slice(slash + 1)) : undefined;
+			if (!chosen) {
+				announce(ctx, `exchange-stats: unknown summaryModel ${configuredModel}; using trace sentence`, "warning");
+			} else {
+				summaryScheduler = new HeadlineScheduler({
+					summarize: async (trace, signal) => {
+						const response = await ctx.modelRegistry.streamSimple(chosen, {
+							systemPrompt: "Summarize this live thinking trace as a headline of at most 10 words. Return only the headline.",
+							messages: [{ role: "user", content: [{ type: "text", text: trace }], timestamp: Date.now() }],
+						}, { reasoning: "off", maxTokens: 32, signal }).result();
+						if (response.stopReason !== "stop") throw new Error(response.errorMessage ?? "headline request failed");
+						return response.content.filter((part) => part.type === "text").map((part) => part.text).join(" ");
+					},
+					onHeadline: (key, headline) => {
+						const [timestamp, index] = key.split(":").map(Number);
+						toolFold.setThinkingHeadline({ timestamp }, index, headline);
+						requestRender();
+					},
+					onFailure: (reason) => announce(ctx, `exchange-stats: headline summary ${reason === "timeout" ? "timed out" : "failed"}; using trace sentence`, "warning", "exchange-stats:headline-failure"),
+				});
+			}
+		}
 		if (invalidKey && !warnedAboutKey) {
 			announce(ctx, "exchange-stats: invalid fold shortcut; using default key", "warning", "exchange-stats:invalid-fold-key");
 			warnedAboutKey = true;
@@ -430,6 +463,8 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 
 	pi.on("session_shutdown", () => {
 		themeContext = undefined;
+		summaryScheduler?.dispose();
+		summaryScheduler = undefined;
 		toolPatch.restore();
 		thinkingPatch.restore();
 		resetExchangeState();
@@ -439,12 +474,28 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		if (event.message.role !== "assistant") return;
 		toolFold.observeThinking(event.message, event.assistantMessageEvent, event.message.usage?.reasoning);
 		toolFold.ingest(event.message);
+		const update = event.assistantMessageEvent;
+		if (update.type === "thinking_delta" && update.contentIndex !== undefined) {
+			let start = update.contentIndex;
+			while (start > 0 && event.message.content[start - 1]?.type === "thinking") start--;
+			let end = start;
+			while (event.message.content[end]?.type === "thinking") end++;
+			const trace = event.message.content.slice(start, end).map((item) => item.type === "thinking" ? item.thinking.trim() : "").filter(Boolean).join("\n\n");
+			if (trace) summaryScheduler?.observe(`${event.message.timestamp}:${start}`, trace);
+		} else if (update.type !== "thinking_start") {
+			for (let index = 0; index < event.message.content.length; index++) {
+				if (event.message.content[index].type === "thinking") summaryScheduler?.settle(`${event.message.timestamp}:${index}`);
+			}
+		}
 	});
 
 	pi.on("message_end", (event) => {
 		if (event.message.role === "assistant") {
 			toolFold.ingest(event.message);
 			toolFold.settleThinking(event.message);
+			for (let index = 0; index < event.message.content.length; index++) {
+				if (event.message.content[index].type === "thinking") summaryScheduler?.settle(`${event.message.timestamp}:${index}`);
+			}
 		}
 	});
 
@@ -476,6 +527,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		liveTimer = setInterval(() => {
 			try {
 				liveRefresh?.();
+				summaryScheduler?.tick();
 			} catch {
 				// /new or /reload invalidates the runner while a run is in flight; a stale
 				// status update is not worth failing the turn over.

@@ -202,3 +202,22 @@ test("live process and picker rows use the same completed headline", () => {
 	assert.ok(rows.some((line) => line.includes("Checked the configuration.")));
 	assert.ok(picker.render(40).every((line) => visibleWidth(line) === 40));
 });
+
+test("model headline appears in fresh Pi render snapshots and retains active dim color", () => {
+	const model = new ToolFoldModel(() => 1000);
+	const snapshot = () => ({ role: "assistant", timestamp: 500, content: [{ type: "thinking", thinking: "Checking the setting. More unfinished text" }], stopReason: "stop" });
+	model.observeThinking(snapshot(), { type: "thinking_delta", contentIndex: 0, delta: snapshot().content[0].thinking });
+	model.ingest(snapshot());
+	model.toggleProcess(model.processes()[0].id);
+	const patch = installThinkingFold(AssistantMessageComponent, model, () => ({ fg(_name, text) { return `\x1b[2m${text}\x1b[0m`; } }));
+	const component = new AssistantMessageComponent();
+	try {
+		component.updateContent(snapshot(), true);
+		model.setThinkingHeadline(snapshot(), 0, "≈ Checking settings");
+		component.updateContent(snapshot(), true);
+		assert.match(component.render(80).join("\n"), /\x1b\[2m◈ ≈ Checking settings · /);
+		model.setThinkingHeadline(snapshot(), 0, undefined);
+		component.updateContent(snapshot(), true);
+		assert.match(component.render(80).join("\n"), /◈ Checking the setting\./);
+	} finally { patch.restore(); }
+});

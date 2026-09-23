@@ -24,6 +24,7 @@
     "url": "https://github.com/ezoushen/pi-extensions/issues"
   },
   "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },

@@ -7,6 +7,9 @@ block counts and total wall time, or the current block and its live time while
 streaming. At the next fold level, each block has a one-line title in stream order.
 Tool titles show the argument, status, duration, and result line count. Thinking
 titles show the trace's last complete sentence, or `Thinking` until one completes.
+With `summaryModel` configured, a short model headline takes its place when ready;
+the leading `≈` marks it as a summary. A failed or timed-out request returns to
+the sentence fallback and gives one warning per session.
 The headline is shortened first to make room for duration and stats.
 Titles also show elapsed time, thinking tokens and rate while streaming; a `~` marks
 token estimates when the provider has not reported reasoning usage. Settled titles
@@ -43,7 +46,7 @@ at `thinking_end`, the first following non-thinking event, or message end,
 whichever comes first. Streamed snapshots of one assistant message must retain
 the same Pi message timestamp for the local clock to follow them.
 Assistant messages should include usage and cost fields when the provider supports
-them. No network service or machine-local file is required.
+them. Model headlines use Pi's configured provider; no separate endpoint is needed.
 
 ## If the contract is unmet
 
@@ -69,6 +72,21 @@ The optional `exchange-stats.json` file in Pi's agent directory configures
 `ctrl+alt+x` or `alt+enter`; an invalid value uses its default and produces one warning.
 The matching environment variables are `PI_EXCHANGE_STATS_PROCESS_KEY`,
 `PI_EXCHANGE_STATS_EXCHANGE_KEY`, and `PI_EXCHANGE_STATS_PICKER_KEY`.
+
+Set `summaryModel` to a `provider/modelId` registered in Pi's model registry.
+It is off by default. Put it in `<agentDir>/exchange-stats.json`, or in a trusted
+project's `.pi/exchange-stats.json`. For example:
+
+```json
+{ "summaryModel": "my-provider/my-headline-model" }
+```
+
+`PI_EXCHANGE_STATS_SUMMARY_MODEL` overrides the file setting. While thinking
+streams, the extension sends at most the last 1,500 trace characters after about
+400 new tokens or six seconds, and once more when the block ends. Requests use
+reasoning off and a 32 token output cap. The model call never delays the turn or
+the trace; with the setting absent or an unknown model, titles use the trace
+sentence.
 
 ## Install and verify
 
