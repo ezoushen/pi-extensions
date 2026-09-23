@@ -15,6 +15,20 @@ interface ThinkingMessage {
 	timestamp?: number;
 }
 
+interface ProcessMessage extends ThinkingMessage {
+	content: Array<{ type: string; thinking?: string; text?: string; id?: string; name?: string; arguments?: Record<string, unknown> }>;
+}
+
+type ProcessBlock =
+	| { kind: "thinking"; key: string; message: ThinkingMessage; index: number; trace: string }
+	| { kind: "tool"; key: string };
+
+interface Process {
+	id: string;
+	blocks: ProcessBlock[];
+	open: boolean;
+}
+
 const MAX_THINKING_MESSAGES = 256;
 
 function elapsed(ms: number): string {
@@ -85,6 +99,11 @@ class ThinkingFoldModel {
 		const rate = ms > 0 ? Math.round(count / (ms / 1000)) : 0;
 		return `◈ Thinking · ${elapsed(ms)} · ${prefix}${count} tok · ${prefix}${rate} tok/s`;
 	}
+
+	timing(message: ThinkingMessage, index: number): { start: number; end?: number } | undefined {
+		const block = this.forMessage(message, false)?.get(index);
+		return block && { start: block.startedAt, end: block.endedAt };
+	}
 }
 
 interface ToolBlock {
@@ -118,15 +137,111 @@ function lineCount(result?: ToolBlock["result"]): number {
 	return output.replace(/\r?\n$/, "").split(/\r?\n/).length;
 }
 
-/** Holds display state for tool calls and assistant thinking runs. */
+/** Holds process membership, fold state, and display timing for assistant blocks. */
 export class ToolFoldModel {
 	private blocks = new Map<string, ToolBlock>();
+	private processList: Process[] = [];
+	private processByBlock = new Map<string, Process>();
+	private seenContent = new Map<number, Set<number>>();
+	private openProcess?: Process;
+	private openThinking = new Set<string>();
 	private now: () => number;
 	private thinking: ThinkingFoldModel;
 
 	constructor(now: () => number = Date.now) {
 		this.now = now;
 		this.thinking = new ThinkingFoldModel(now);
+	}
+
+	/** Adds newly visible content in message order; repeated snapshots keep existing membership. */
+	ingest(message: ProcessMessage): void {
+		if (typeof message?.timestamp !== "number" || !Number.isFinite(message.timestamp) || !Array.isArray(message.content)) return;
+		const seen = this.seenContent.get(message.timestamp) ?? new Set<number>();
+		this.seenContent.set(message.timestamp, seen);
+		for (let index = 0; index < message.content.length; index++) {
+			const item = message.content[index];
+			if (item.type === "thinking") {
+				const start = index;
+				const traces: string[] = [];
+				while (message.content[index]?.type === "thinking") {
+					if (message.content[index].thinking?.trim()) traces.push(message.content[index].thinking!.trim());
+					index++;
+				}
+				index--;
+				if (!traces.length) continue;
+				const key = `thinking:${message.timestamp}:${start}`;
+				const existing = this.processByBlock.get(key)?.blocks.find((block) => block.key === key);
+			if (existing?.kind === "thinking") existing.trace = traces.join("\n\n");
+				else this.append({ kind: "thinking", key, message: { timestamp: message.timestamp }, index: start, trace: traces.join("\n\n") });
+				continue;
+			}
+			if (seen.has(index)) continue;
+			if (item.type === "text") {
+				if (!item.text) continue;
+				this.openProcess = undefined;
+			}
+			if (item.type === "toolCall" && item.id) {
+				this.append({ kind: "tool", key: `tool:${item.id}` });
+				this.observe(item.id, item.name ?? "tool", item.arguments ?? {});
+			}
+			if (item.type === "toolCall" && !item.id) continue;
+			seen.add(index);
+		}
+	}
+
+	private append(block: ProcessBlock): void {
+		if (this.processByBlock.has(block.key)) return;
+		if (!this.openProcess) {
+			this.openProcess = { id: block.key, blocks: [], open: false };
+			this.processList.push(this.openProcess);
+		}
+		this.openProcess.blocks.push(block);
+		this.processByBlock.set(block.key, this.openProcess);
+	}
+
+	processes(): ReadonlyArray<Process> { return this.processList; }
+	endExchange(): void { this.openProcess = undefined; }
+	processForThinking(message: ThinkingMessage, index: number): Process | undefined {
+		return this.processByBlock.get(`thinking:${message.timestamp}:${index}`);
+	}
+	processForTool(id: string): Process | undefined { return this.processByBlock.get(`tool:${id}`); }
+	isProcessLead(id: string, key: string): boolean { return this.processList.find((process) => process.id === id)?.blocks[0]?.key === key; }
+	toggleProcess(id: string): boolean | undefined {
+		const process = this.processList.find((item) => item.id === id);
+		if (!process) return undefined;
+		process.open = !process.open;
+		return process.open;
+	}
+	isProcessOpen(id: string): boolean { return this.processList.find((item) => item.id === id)?.open ?? false; }
+	toggleThinking(message: ThinkingMessage, index: number): boolean {
+		const key = `thinking:${message.timestamp}:${index}`;
+		if (this.openThinking.has(key)) { this.openThinking.delete(key); return false; }
+		this.openThinking.add(key);
+		return true;
+	}
+	isThinkingOpen(message: ThinkingMessage, index: number): boolean { return this.openThinking.has(`thinking:${message.timestamp}:${index}`); }
+
+	processLine(id: string): string {
+		const process = this.processList.find((item) => item.id === id);
+		if (!process) return "";
+		let first: number | undefined;
+		let last: number | undefined;
+		let activity = "";
+		for (const block of process.blocks) {
+			const tool = block.kind === "tool" ? this.blocks.get(block.key.slice(5)) : undefined;
+			const timing = block.kind === "thinking"
+				? this.thinking.timing(block.message, block.index)
+				: tool?.startedAt === undefined ? undefined : { start: tool.startedAt, end: tool.endedAt };
+			if (!timing) continue;
+			first = first === undefined ? timing.start : Math.min(first, timing.start);
+			last = Math.max(last ?? timing.start, timing.end ?? this.now());
+			if (timing.end === undefined) activity = block.kind === "tool"
+				? `⚙ ${tool?.name ?? "tool"} running ${elapsed(this.now() - timing.start)}`
+				: this.thinking.title(block.message, block.index, block.trace, true);
+		}
+		const count = `◈${process.blocks.filter((block) => block.kind === "thinking").length} ⚙${process.blocks.filter((block) => block.kind === "tool").length}`;
+		const total = first === undefined || last === undefined ? "0ms" : elapsed(Math.max(0, last - first));
+		return `${process.open ? "▾" : "▸"} ${count} · ${activity || total}`;
 	}
 
 	observe(id: string, name: string, args: Record<string, unknown>, result?: ToolBlock["result"]): void {
