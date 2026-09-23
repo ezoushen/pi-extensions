@@ -351,11 +351,15 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			}
 			return undefined;
 		});
-		exchangeIndex = entries.reduce((highest, entry) => entry.type === "custom" && entry.customType === ENTRY_TYPE && entry.data?.kind === "exchange"
+		// Completed entries only seed history. A compaction or tree switch can arrive while a
+		// run is in flight (Pi auto-compacts before settling); that run keeps the index it
+		// began with, and branch messages after the last record belong to it.
+		const recordedIndex = entries.reduce((highest, entry) => entry.type === "custom" && entry.customType === ENTRY_TYPE && entry.data?.kind === "exchange"
 			? Math.max(highest, entry.data.index) : highest, 0);
+		if (!running) exchangeIndex = recordedIndex;
 		const lastCompaction = entries.findLastIndex((entry) => entry.type === "compaction");
 		const active = entries.slice(lastCompaction + 1);
-		let nextExchange = active.find((entry) => entry.type === "custom" && entry.customType === ENTRY_TYPE && entry.data?.kind === "exchange")?.data?.index ?? exchangeIndex + 1;
+		let nextExchange = active.find((entry) => entry.type === "custom" && entry.customType === ENTRY_TYPE && entry.data?.kind === "exchange")?.data?.index ?? (running ? exchangeIndex : exchangeIndex + 1);
 		let inExchange = false;
 		for (const entry of active) {
 			if (entry.type === "custom" && entry.customType === ENTRY_TYPE && entry.data?.kind === "exchange") {
@@ -371,6 +375,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		}
 		// A trailing exchange without a record is history unless it is the run in flight.
 		if (!running) toolFold.endExchange();
+		else if (!inExchange) toolFold.beginExchange(exchangeIndex);
 	}
 
 	// ---- Transcript card ----

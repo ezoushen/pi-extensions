@@ -187,6 +187,28 @@ test("a settled or restored tool call without a result shows no live activity", 
 	try { assert.doesNotMatch(render("unrecorded"), /queued|running/); } finally { trailing.close(); }
 });
 
+test("a compaction while a run is in flight keeps the live exchange index and its later blocks", () => {
+	const oldRecord = { kind: "exchange", index: 1, durationMs: 1000, turnCount: 1, promptCount: 1,
+		model: "old-model", input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0,
+		totalTokens: 0, cost: 0, toolMs: 0, waitingMs: 0 };
+	const entries = [{ type: "message", message: assistant(801, [tool("before")]) }, { type: "custom", customType: "exchange-stats", data: oldRecord }];
+	const mounted = mount(entries);
+	try {
+		mounted.handlers.get("before_agent_start")({}, mounted.ctx);
+		entries.push({ type: "compaction" });
+		mounted.handlers.get("session_compact")({}, mounted.ctx);
+		const message = assistant(802, [tool("after-compact")]);
+		mounted.handlers.get("message_update")({ message: assistant(802, message.content), assistantMessageEvent: { type: "toolcall_end" } }, mounted.ctx);
+		mounted.handlers.get("message_end")({ message: assistant(802, message.content) }, mounted.ctx);
+		entries.push({ type: "message", message });
+		mounted.handlers.get("tool_execution_start")({ toolCallId: "after-compact", toolName: "bash" }, mounted.ctx);
+		mounted.handlers.get("tool_execution_end")({ toolCallId: "after-compact", toolName: "bash", result: { content: [{ type: "text", text: "ok" }] }, isError: false }, mounted.ctx);
+		mounted.handlers.get("agent_settled")({}, mounted.ctx);
+		const saved = entries.filter((entry) => entry.customType === "exchange-stats").map((entry) => ({ index: entry.data.index, blocks: (entry.data.blocks ?? []).map((block) => block.id) }));
+		assert.deepEqual(saved, [{ index: 1, blocks: [] }, { index: 2, blocks: ["tool:after-compact"] }]);
+	} finally { mounted.close(); }
+});
+
 test("compaction and tree rebuild remove prior processes from the picker and keep active toggles", async () => {
 	const entry = (timestamp, id) => ({ type: "message", message: assistant(timestamp, [tool(id)]) });
 	const entries = [entry(301, "old"), { type: "compaction" }, entry(302, "kept")];
