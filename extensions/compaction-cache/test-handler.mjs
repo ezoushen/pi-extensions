@@ -3,6 +3,14 @@
  * pi/ctx. Both bugs found in review lived here, not in the payload builder.
  */
 import ext, { inputTokensAreFree, isTransient, computeFileLists, formatFileOperations } from "./compaction-cache.ts";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Never read the developer's real pi agent directory. Settings resolve from
+// <agentDir>/compaction-cache.json, so an unisolated suite passes or fails depending
+// on what happens to be in $HOME. Set before any test resolves a setting.
+process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-compaction-cache-test-agent-"));
 
 let pass = 0, fail = 0;
 const check = (n, c, e = "") => { if (c) { pass++; console.log("  PASS", n); } else { fail++; console.log("  FAIL", n, e); } };

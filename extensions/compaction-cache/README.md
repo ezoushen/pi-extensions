@@ -80,6 +80,21 @@ sources win. Project settings are ignored when the project is untrusted.
 | `scope` | `"boundary"` | `PI_COMPACTION_CACHE_SCOPE` | `boundary` sends the old slice Pi will discard; `full` sends the whole conversation. |
 | `maxWords` | `1500` | `PI_COMPACTION_CACHE_MAX_WORDS` | Summary word-budget guidance; `0` disables the guidance. |
 
+**Two traps in `models`, both verified against real catalogues:**
+
+1. **A non-empty matcher replaces the cost heuristic entirely.** Models that were active
+   *because* they declare zero cost become inactive unless a pattern also matches them. List
+   every provider you want covered, not just the one that was declining.
+2. **`*` does not cross `/`.** Minimatch treats `/` as a separator, and many model ids contain
+   one (`owner/model-name`). Use `**` for a whole provider:
+
+```json
+{ "models": ["my-local-provider/**", "another-local-provider/**"] }
+```
+
+Run `/compaction-cache-status` after changing it: it names the rule that decided, and the file
+each setting came from.
+
 Example:
 
 ```json

@@ -9,6 +9,11 @@ import test from "node:test";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import cmemExtension from "./cmem.ts";
 
+// Never read the developer's real pi agent directory. Settings resolve from
+// <agentDir>/pi-cmem.json, so an unisolated suite passes or fails depending on
+// what happens to be in $HOME. Set before any test resolves a setting.
+process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-cmem-test-agent-"));
+
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const sourcePath = join(packageRoot, "cmem.ts");
 

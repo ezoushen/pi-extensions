@@ -7,6 +7,11 @@ import test from "node:test";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import extension from "./compaction-cache.ts";
 
+// Never read the developer's real pi agent directory. Settings resolve from
+// <agentDir>/compaction-cache.json, so an unisolated suite passes or fails depending
+// on what happens to be in $HOME. Set before any test resolves a setting.
+process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-compaction-cache-test-agent-"));
+
 const MODEL_WITHOUT_COST = {
 	id: "self-hosted-flash",
 	provider: "local",

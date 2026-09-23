@@ -74,6 +74,24 @@ function gitTrackedFiles(root) {
 		.filter(Boolean);
 }
 
+/**
+ * Scan a file's path AND its contents. An identifier can leak through a file or
+ * directory name alone -- runtime state an extension writes into the working
+ * directory is named after the extension -- and a content-only scan reports clean
+ * while that path sits in the published tree.
+ */
+function scanFile(hits, surface, pkg, relPath, text) {
+	for (const [category, pattern] of forbiddenIdentifiers) {
+		const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+		for (const match of relPath.matchAll(new RegExp(pattern.source, flags))) {
+			hits.push({ surface, package: pkg, file: relPath, category, value: match[0], in: "path" });
+		}
+		for (const match of text.matchAll(new RegExp(pattern.source, flags))) {
+			hits.push({ surface, package: pkg, file: relPath, category, value: match[0], in: "contents" });
+		}
+	}
+}
+
 function packAll() {
 	const temp = mkdtempSync(join(tmpdir(), "pi-extensions-published-docs-"));
 	const packages = [];
@@ -98,12 +116,7 @@ test("packed tarballs and git-tracked source contain no private deployment ident
 		const hits = [];
 		for (const packed of packages) {
 			for (const path of filesUnder(packed.root)) {
-				const text = readFileSync(path, "utf8");
-				for (const [category, pattern] of forbiddenIdentifiers) {
-					for (const match of text.matchAll(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))) {
-						hits.push({ surface: "tarball", package: packed.name, file: path.slice(packed.root.length + 1), category, value: match[0] });
-					}
-				}
+				scanFile(hits, "tarball", packed.name, path.slice(packed.root.length + 1), readFileSync(path, "utf8"));
 			}
 		}
 
@@ -116,12 +129,7 @@ test("packed tarballs and git-tracked source contain no private deployment ident
 		for (const relPath of gitTrackedFiles(repoRoot)) {
 			const path = join(repoRoot, relPath);
 			if (path === selfPath) continue;
-			const text = readFileSync(path, "utf8");
-			for (const [category, pattern] of forbiddenIdentifiers) {
-				for (const match of text.matchAll(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))) {
-					hits.push({ surface: "git-tracked", package: "(repo)", file: relPath, category, value: match[0] });
-				}
-			}
+			scanFile(hits, "git-tracked", "(repo)", relPath, readFileSync(path, "utf8"));
 		}
 
 		assert.deepEqual(hits, []);

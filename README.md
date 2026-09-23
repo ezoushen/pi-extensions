@@ -39,12 +39,22 @@ Settings resolve in this order, with later sources winning:
 1. the package's documented default
 2. a peer service's own published settings, where one applies (`pi-cmem` reads
    claude-mem's settings file to find the worker it is actually running on)
-3. `<pi agent dir>/<package-name>.json`
-4. `<project>/.pi/<package-name>.json`, **only when the project is trusted**
+3. the package's config file in your pi agent directory
+4. the same file in `<project>/.pi/`, **only when the project is trusted**
 5. the package's environment variable
 
 Each value carries the source it came from, so a package can tell you not just what a
 setting is but where it came from. See each package's README for its own settings table.
+
+The config files are named per package — note that one of them does not follow the
+package name:
+
+| package | config file |
+|---|---|
+| `pi-prefix-stabilizer` | `pi-prefix-stabilizer.json` |
+| `pi-compaction-cache` | `compaction-cache.json` |
+| `pi-cmem` | `pi-cmem.json` |
+| `pi-exchange-stats` | none — it reads only what pi supplies |
 
 ## Behaviour when something is missing
 

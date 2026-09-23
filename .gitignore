@@ -1,3 +1,8 @@
 node_modules/
 extensions/*/*.js
 extensions/*/*.tgz
+
+# pi runtime state written into the working directory by running sessions here.
+# Matched generically: extensions name these directories after themselves.
+.pi/
+.pi-*/
