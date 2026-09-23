@@ -76,3 +76,25 @@ test("Pi message events drive thinking titles and shutdown restores the componen
 	} finally { mounted.handlers.get("session_shutdown")(); }
 	assert.equal(AssistantMessageComponent.prototype.updateContent, original);
 });
+
+test("session UI theme supplies dim ANSI to both titles and follows theme changes", () => {
+	initTheme("dark");
+	const mounted = mount(ToolExecutionComponent);
+	let ansi = "\x1b[38;2;80;80;80m";
+	Object.defineProperty(mounted.ctx.ui, "theme", { get: () => ({ fg(name, value) {
+		assert.equal(name, "dim");
+		return `${ansi}${value}\x1b[0m`;
+	} }) });
+	try {
+		mounted.handlers.get("session_start")({}, mounted.ctx);
+		const tool = new ToolExecutionComponent("bash", "theme-call", { command: "pwd" }, {}, undefined, { requestRender() {} }, ".");
+		const message = { role: "assistant", timestamp: 90, content: [{ type: "thinking", thinking: "trace" }], stopReason: "stop" };
+		const assistant = new AssistantMessageComponent();
+		assistant.updateContent(message, false);
+		assert.match(tool.render(80)[0], /\x1b\[38;2;80;80;80m/);
+		assert.match(assistant.render(80).join("\n"), /\x1b\[38;2;80;80;80m/);
+		ansi = "\x1b[38;2;120;120;120m";
+		assert.match(tool.render(80)[0], /\x1b\[38;2;120;120;120m/);
+		assert.match(assistant.render(80).join("\n"), /\x1b\[38;2;120;120;120m/);
+	} finally { mounted.handlers.get("session_shutdown")(); }
+});

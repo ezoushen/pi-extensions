@@ -13,8 +13,12 @@ interface ToolClass {
 	prototype: ToolComponent;
 }
 
+interface TitleTheme {
+	fg(color: "dim", text: string): string;
+}
+
 /** Installs a reversible display wrapper; unsupported Pi components stay native. */
-export function installToolFold(componentClass: ToolClass, model: ToolFoldModel): { installed: boolean; restore: () => void } {
+export function installToolFold(componentClass: ToolClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined): { installed: boolean; restore: () => void } {
 	const prototype = componentClass?.prototype;
 	const original = prototype?.render;
 	if (typeof original !== "function") return { installed: false, restore() {} };
@@ -32,7 +36,8 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel)
 			const argument = argumentWidth > 2 && parts.argument
 				? truncateToWidth(`  ${parts.argument}`, argumentWidth, "…")
 				: "";
-			return [name + argument + stats];
+			const title = name + argument + stats;
+			return [getTheme()?.fg("dim", title) ?? title];
 		} catch {
 			return original.call(this, width);
 		}
@@ -61,7 +66,7 @@ interface AssistantClass {
 }
 
 /** Replaces only Pi's thinking children and keeps its text rendering in place. */
-export function installThinkingFold(componentClass: AssistantClass, model: ToolFoldModel): { installed: boolean; restore: () => void } {
+export function installThinkingFold(componentClass: AssistantClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined): { installed: boolean; restore: () => void } {
 	const prototype = componentClass?.prototype;
 	const original = prototype?.updateContent;
 	if (typeof original !== "function") return { installed: false, restore() {} };
@@ -117,7 +122,7 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 				render(width: number) {
 					const padding = Math.min(component.outputPad, Math.max(0, Math.floor((width - 1) / 2)));
 					const title = truncateToWidth(model.thinkingTitle(message, run.index, run.trace, component.isStreaming), width - padding * 2, "…");
-					return new Text(title, component.outputPad, 0).render(width);
+					return new Text(getTheme()?.fg("dim", title) ?? title, component.outputPad, 0).render(width);
 				},
 				invalidate() {},
 			};

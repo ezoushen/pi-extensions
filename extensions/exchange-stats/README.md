@@ -7,6 +7,8 @@ Thinking runs render as one-line titles. While streaming, each title shows elaps
 time, thinking tokens and rate; a `~` marks token estimates when the provider has
 not reported reasoning usage. Settled titles show duration and word count. Opening
 a thinking title shows Pi's full trace, regardless of Pi's hide-thinking setting.
+Tool and thinking titles use the active Pi theme's dim color. Assistant text and
+opened native content keep Pi's own styling.
 
 An **exchange** is one uninterrupted work span from a submitted prompt until Pi has
 nothing left to do automatically. A **turn** is one model response plus the tools it
@@ -25,7 +27,8 @@ Tool folding uses Pi's `ToolExecutionComponent.render` interface from version 0.
 Thinking folding uses `AssistantMessageComponent.updateContent` and Pi's
 `message_update` events. Its clock starts at the first thinking delta and stops
 at `thinking_end`, the first following non-thinking event, or message end,
-whichever comes first.
+whichever comes first. Streamed snapshots of one assistant message must retain
+the same Pi message timestamp for the local clock to follow them.
 Assistant messages should include usage and cost fields when the provider supports
 them. No network service or machine-local file is required.
 
