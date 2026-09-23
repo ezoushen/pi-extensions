@@ -45,7 +45,10 @@ Tool time is the union of tool spans, not their sum, so parallel calls are not c
 twice. Model time is estimated as turn wall time minus tool time. Output throughput is
 calculated per turn, while cumulative cost and token fields use Pi's reported usage.
 Run `/exstats` to append a cumulative session card. Exchange entries retain block
-durations, status, counts, and headlines outside model context. On resume, reload,
+durations, status, counts, and headlines outside model context. A model headline
+that arrives after its exchange settles is saved in a separate, unrendered
+`exchange-stats-headline` entry holding only the block id, headline and source, and
+restore applies the latest one. On resume, reload,
 or a branch switch, the extension rebuilds fold state from the active session
 branch without sending historical thinking to the headline model. Older entries
 without block statistics still show their card; their thinking titles use `—` for

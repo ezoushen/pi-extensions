@@ -68,6 +68,46 @@ test("a second extension instance restores a model headline and saved time witho
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("a model headline that resolves after the exchange settles is shown live and restored", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-fold-late-"));
+	const entries = [];
+	const pending = [];
+	const registry = { find: () => ({}), streamSimple: () => ({ result: () => new Promise((resolve) => pending.push(resolve)) }) };
+	const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve)); };
+	try {
+		writeFileSync(join(dir, "exchange-stats.json"), JSON.stringify({ summaryModel: "stub/headline" }));
+		const first = mount(entries, dir, registry);
+		const trace = "Inspecting deferred work. " + "x ".repeat(900);
+		const content = [{ type: "thinking", thinking: trace }, { type: "text", text: "Done" }];
+		first.handlers.get("before_agent_start")({}, first.ctx);
+		first.handlers.get("message_update")({ message: assistant(401, content), assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: trace } }, first.ctx);
+		await flush();
+		first.handlers.get("message_end")({ message: assistant(401, content) }, first.ctx);
+		entries.push({ type: "message", message: assistant(401, content) });
+		first.handlers.get("agent_settled")({}, first.ctx);
+		const record = entries.find((entry) => entry.customType === "exchange-stats").data;
+		assert.equal(record.blocks[0].headlineSource, "trace");
+		while (pending.length) {
+			pending.shift()({ stopReason: "stop", content: [{ type: "text", text: "Deferred model headline" }] });
+			await flush();
+		}
+		const live = new AssistantMessageComponent();
+		first.shortcuts.get("ctrl+alt+f")(first.ctx);
+		live.updateContent(assistant(401, content), false);
+		assert.match(live.render(100).join("\n"), /≈ Deferred model headline/);
+		const followUps = entries.filter((entry) => entry.type === "custom" && entry.customType !== "exchange-stats");
+		assert.ok(followUps.length > 0);
+		assert.doesNotMatch(JSON.stringify(followUps), /Inspecting deferred|x x x|Done/);
+		first.close();
+		const second = mount(entries, dir, { find: () => ({}), streamSimple: () => { throw new Error("restore must not summarize"); } });
+		second.shortcuts.get("ctrl+alt+f")(second.ctx);
+		const restored = new AssistantMessageComponent();
+		restored.updateContent(assistant(401, content), false);
+		assert.match(restored.render(100).join("\n"), /≈ Deferred model headline · .* · 903 words/);
+		second.close();
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("a 0.1.0 entry keeps its card and derives an untimed thinking title from its message", () => {
 	const oldRecord = { kind: "exchange", index: 1, durationMs: 4000, turnCount: 1, promptCount: 1,
 		model: "old-model", input: 2, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0,

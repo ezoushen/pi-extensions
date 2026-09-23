@@ -16,6 +16,9 @@ export type FoldBlockRecord =
 	| { kind: "thinking"; id: string; durationMs?: number; startedAt?: number; endedAt?: number; status: "done"; wordCount: number; headline: string; headlineSource: "model" | "trace" }
 	| { kind: "tool"; id: string; durationMs?: number; startedAt?: number; endedAt?: number; status: "ok" | "error" | "unknown"; lineCount: number };
 
+/** A headline correction for a thinking block whose exchange record is already saved. */
+export interface ThinkingHeadlinePatch { id: string; headline: string; headlineSource: "model" | "trace" }
+
 interface ThinkingMessage {
 	timestamp?: number;
 }
@@ -53,6 +56,7 @@ function headline(trace: string, streaming: boolean): string {
 	}
 	return last;
 }
+const traceHeadline = headline;
 
 /** Holds display timing for each thinking content item in an assistant message. */
 class ThinkingFoldModel {
@@ -413,13 +417,25 @@ export class ToolFoldModel {
 		return this.thinking.title(message, index, trace, streaming, this.pendingThinking.get(key) ?? this.saved?.(key));
 	}
 
-	setThinkingHeadline(message: ThinkingMessage, index: number, headline: string | undefined): void {
+	/**
+	 * Applies a model headline, or `undefined` to fall back to the trace sentence.
+	 * Returns the correction to persist when the block's exchange record was already
+	 * saved with a different headline; otherwise the change is live or still pending.
+	 */
+	setThinkingHeadline(message: ThinkingMessage, index: number, headline: string | undefined): ThinkingHeadlinePatch | undefined {
+		const key = `thinking:${message.timestamp}:${index}`;
 		this.thinking.setHeadline(message, index, headline);
-		const pending = this.pendingThinking.get(`thinking:${message.timestamp}:${index}`);
-		if (pending?.kind === "thinking" && headline) {
-			pending.headline = headline;
-			pending.headlineSource = "model";
+		const block = this.processByBlock.get(key)?.blocks.find((item) => item.key === key);
+		const next = headline ? { headline, headlineSource: "model" as const }
+			: block?.kind === "thinking" ? { headline: traceHeadline(block.trace, false), headlineSource: "trace" as const } : undefined;
+		const pending = this.pendingThinking.get(key);
+		if (pending?.kind === "thinking") {
+			if (headline && next) Object.assign(pending, next);
+			return undefined;
 		}
+		const saved = this.saved?.(key);
+		if (!next || saved?.kind !== "thinking" || (saved.headline === next.headline && saved.headlineSource === next.headlineSource)) return undefined;
+		return { id: key, ...next };
 	}
 
 	toggle(id: string): boolean | undefined {

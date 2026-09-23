@@ -48,12 +48,18 @@ import { resolveSettings, type SettingsRuntime } from "../../shared/settings.ts"
 import { FoldPicker } from "./src/fold-picker.ts";
 import { TranscriptCursor } from "./src/transcript-cursor.ts";
 import { HeadlineLengthError, HeadlineScheduler } from "./src/headline-scheduler.ts";
-import { ToolFoldModel, type FoldBlockRecord } from "./src/tool-fold.ts";
+import { ToolFoldModel, type FoldBlockRecord, type ThinkingHeadlinePatch } from "./src/tool-fold.ts";
 import { installThinkingFold, installToolFold } from "./src/tool-render.ts";
 import { Box, Text } from "@earendil-works/pi-tui";
 import type { KeyId } from "@earendil-works/pi-tui";
 
 const ENTRY_TYPE = "exchange-stats";
+/**
+ * Headline corrections for blocks whose exchange record was already written, such
+ * as a model summary that resolves after `agent_settled`. It has no entry renderer,
+ * so Pi keeps it out of the transcript; restore applies the latest one per block.
+ */
+const HEADLINE_ENTRY_TYPE = "exchange-stats-headline";
 const STATUS_KEY = "exchange";
 /** How often the live status line refreshes while an exchange is running. */
 const TICK_MS = 1_000;
@@ -333,11 +339,15 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		const entries = (ctx.sessionManager?.getBranch() ?? []) as FoldSessionEntry[];
 		restoredEntries = entries;
 		toolFold.clear((id) => {
+			let correction: ThinkingHeadlinePatch | undefined;
 			for (let index = restoredEntries.length - 1; index >= 0; index--) {
 				const entry = restoredEntries[index];
-				if (entry.type !== "custom" || entry.customType !== ENTRY_TYPE) continue;
+				if (entry.type !== "custom") continue;
+				const patch = entry.customType === HEADLINE_ENTRY_TYPE ? entry.data as unknown as ThinkingHeadlinePatch | undefined : undefined;
+				if (!correction && patch?.id === id) correction = patch;
+				if (entry.customType !== ENTRY_TYPE) continue;
 				const found = entry.data?.blocks?.find((block) => block.id === id);
-				if (found) return found;
+				if (found) return found.kind === "thinking" && correction ? { ...found, headline: correction.headline, headlineSource: correction.headlineSource } : found;
 			}
 			return undefined;
 		});
@@ -448,7 +458,15 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 					},
 					onHeadline: (key, headline) => {
 						const [timestamp, index] = key.split(":").map(Number);
-						toolFold.setThinkingHeadline({ timestamp }, index, headline);
+						const patch = toolFold.setThinkingHeadline({ timestamp }, index, headline);
+						if (patch) {
+							try {
+								pi.appendEntry<ThinkingHeadlinePatch>(HEADLINE_ENTRY_TYPE, patch);
+								restoredEntries.push({ type: "custom", customType: HEADLINE_ENTRY_TYPE, data: patch as unknown as ExchangeRecord });
+							} catch {
+								// See the agent_settled note on runtimes without entry persistence.
+							}
+						}
 						requestRender();
 					},
 					onFailure: (reason, message) => {
