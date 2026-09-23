@@ -4,7 +4,9 @@ Show timing, token, cache, cost, and tool-use statistics for each Pi exchange.
 Each run of thinking and tool calls between pieces of assistant text starts folded
 as one process line, even when it spans assistant messages or turns. The line shows
 block counts and total wall time, or the current block and its live time while
-streaming. A tool call that has streamed but not yet started shows as `⚙ <tool> queued`. At the next fold level, each block has a one-line title in stream order.
+streaming. In the running exchange, a tool call that has streamed but not yet started
+shows as `⚙ <tool> queued`. A call whose exchange settled, or was restored, without a
+result shows `no result` in its title and no live activity. At the next fold level, each block has a one-line title in stream order.
 Tool titles show the argument, status, duration, and result line count. Thinking
 titles show the trace's last complete sentence, or `Thinking` until one completes.
 With `summaryModel` configured, a short model headline takes its place when ready;

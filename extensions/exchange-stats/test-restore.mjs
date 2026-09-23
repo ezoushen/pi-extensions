@@ -165,6 +165,28 @@ test("a 0.1.0 entry keeps its card and derives an untimed thinking title from it
 	} finally { mounted.close(); }
 });
 
+test("a settled or restored tool call without a result shows no live activity", () => {
+	const oldRecord = { kind: "exchange", index: 1, durationMs: 4000, turnCount: 1, promptCount: 1,
+		model: "old-model", input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0,
+		totalTokens: 0, cost: 0, toolMs: 0, waitingMs: 0 };
+	const render = (id) => new ToolExecutionComponent("bash", id, { command: `secret-${id}` }, undefined, undefined, { requestRender() {} }, ".").render(100).join("\n");
+	const entries = [{ type: "message", message: assistant(601, [tool("aborted")]) }, { type: "custom", customType: "exchange-stats", data: oldRecord }];
+	const restored = mount(entries);
+	try {
+		assert.doesNotMatch(render("aborted"), /queued|running/);
+		restored.shortcuts.get("ctrl+alt+f")(restored.ctx);
+		assert.doesNotMatch(render("aborted"), /queued|running/);
+		assert.match(render("aborted"), /⚙ bash.*secret-aborted.*no result/);
+		restored.handlers.get("before_agent_start")({}, restored.ctx);
+		restored.handlers.get("message_update")({ message: assistant(602, [tool("live")]), assistantMessageEvent: { type: "toolcall_end" } }, restored.ctx);
+		assert.match(render("live"), /⚙ bash queued/);
+		restored.handlers.get("agent_settled")({}, restored.ctx);
+		assert.doesNotMatch(render("live"), /queued|running/);
+	} finally { restored.close(); }
+	const trailing = mount([{ type: "message", message: assistant(701, [tool("unrecorded")]) }]);
+	try { assert.doesNotMatch(render("unrecorded"), /queued|running/); } finally { trailing.close(); }
+});
+
 test("compaction and tree rebuild remove prior processes from the picker and keep active toggles", async () => {
 	const entry = (timestamp, id) => ({ type: "message", message: assistant(timestamp, [tool(id)]) });
 	const entries = [entry(301, "old"), { type: "compaction" }, entry(302, "kept")];

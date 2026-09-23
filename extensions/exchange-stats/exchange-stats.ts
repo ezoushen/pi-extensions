@@ -369,6 +369,8 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 				toolFold.end(entry.message.toolCallId, false, { content: entry.message.content as Array<{ type: string; text?: string }> });
 			}
 		}
+		// A trailing exchange without a record is history unless it is the run in flight.
+		if (!running) toolFold.endExchange();
 	}
 
 	// ---- Transcript card ----

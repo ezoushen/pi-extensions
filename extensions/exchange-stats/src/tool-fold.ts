@@ -36,6 +36,8 @@ interface Process {
 	exchange: number;
 	blocks: ProcessBlock[];
 	open: boolean;
+	/** Set once its exchange settles or is restored from history; it then shows no live activity. */
+	settled: boolean;
 }
 
 const MAX_THINKING_MESSAGES = 256;
@@ -270,7 +272,7 @@ export class ToolFoldModel {
 	private append(block: ProcessBlock): void {
 		if (this.processByBlock.has(block.key)) return;
 		if (!this.openProcess) {
-			this.openProcess = { id: block.key, exchange: Math.max(1, this.currentExchange), blocks: [], open: false };
+			this.openProcess = { id: block.key, exchange: Math.max(1, this.currentExchange), blocks: [], open: false, settled: false };
 			this.processList.push(this.openProcess);
 			this.processById.set(this.openProcess.id, this.openProcess);
 		}
@@ -321,7 +323,11 @@ export class ToolFoldModel {
 	cursorTitle(): string | undefined { return this.cursorActive ? this.cursorRows().find((item) => item.key === this.cursorKey)?.title : undefined; }
 	isCursorHighlighted(key: string): boolean { return this.cursorActive && this.cursorKey === key; }
 	beginExchange(index = this.currentExchange + 1): void { this.currentExchange = index; this.openProcess = undefined; }
-	endExchange(): void { this.openProcess = undefined; }
+	/** Closes the open process and marks every process so far as settled. */
+	endExchange(): void {
+		this.openProcess = undefined;
+		for (let index = this.processList.length - 1; index >= 0 && !this.processList[index].settled; index--) this.processList[index].settled = true;
+	}
 	toggleLatestProcess(): boolean | undefined {
 		const process = this.processList.at(-1);
 		return process && this.toggleProcess(process.id);
@@ -376,11 +382,11 @@ export class ToolFoldModel {
 				: tool?.startedAt === undefined ? undefined : { start: tool.startedAt, end: tool.endedAt };
 			// Pi streams a tool call before executing it; name it without inventing a time.
 			// A saved record means the call settled (possibly never run), so it is not queued.
-			if (!timing && block.kind === "tool" && tool?.endedAt === undefined && !saved) queued ||= `⚙ ${tool?.name ?? "tool"} queued`;
+			if (!timing && !process.settled && block.kind === "tool" && tool?.endedAt === undefined && !saved) queued ||= `⚙ ${tool?.name ?? "tool"} queued`;
 			if (!timing) continue;
 			first = first === undefined ? timing.start : Math.min(first, timing.start);
-			last = Math.max(last ?? timing.start, timing.end ?? this.now());
-			if (timing.end === undefined) activity = block.kind === "tool"
+			last = Math.max(last ?? timing.start, timing.end ?? (process.settled ? timing.start : this.now()));
+			if (timing.end === undefined && !process.settled) activity = block.kind === "tool"
 				? `⚙ ${tool?.name ?? "tool"} running ${elapsed(this.now() - timing.start)}`
 				: this.thinking.title(block.message, block.index, block.trace, true);
 		}
@@ -470,8 +476,12 @@ export class ToolFoldModel {
 		if (!block) return undefined;
 		const saved = this.saved?.(`tool:${id}`);
 		const argument = summary(block.args);
+		// A call whose exchange settled without a result never finished; it must not read as running.
+		const settled = this.processByBlock.get(`tool:${id}`)?.settled ?? false;
+		const noResult = saved?.kind === "tool" ? saved.status === "unknown" : block.endedAt === undefined && settled;
+		if (noResult) return { name: block.name, argument, stats: "no result" };
 		const elapsed = saved?.durationMs ?? (block.startedAt === undefined ? undefined : Math.max(0, (block.endedAt ?? this.now()) - block.startedAt));
-		const status = saved?.kind === "tool" ? saved.status === "error" ? "✗" : saved.status === "ok" ? "✓" : "running" : block.endedAt === undefined ? "running" : block.isError ? "✗" : "✓";
+		const status = saved?.kind === "tool" ? saved.status === "error" ? "✗" : "✓" : block.endedAt === undefined ? "running" : block.isError ? "✗" : "✓";
 		const count = saved?.kind === "tool" ? saved.lineCount : lineCount(block.result);
 		const lines = saved?.kind === "tool" || block.endedAt !== undefined ? ` · ${count} ${count === 1 ? "line" : "lines"}` : "";
 		return { name: block.name, argument, stats: `${status} ${duration(elapsed)}${lines}` };
