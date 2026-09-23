@@ -1,7 +1,7 @@
-import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ToolFoldModel } from "./tool-fold.ts";
 
-type Theme = { fg(color: "dim", text: string): string };
+type Theme = { fg(color: "dim", text: string): string; bg(color: "customMessageBg", text: string): string };
 
 interface Item {
 	label: string;
@@ -29,16 +29,20 @@ export class FoldPicker {
 			if (process.exchange !== exchange) {
 				exchange = process.exchange;
 				const id = exchange;
-				items.push({ label: `Exchange ${id}`, toggle: () => { this.model.toggleExchange(id); } });
+				items.push({ label: `${this.model.processes().filter((item) => item.exchange === id).every((item) => item.open) ? "▾" : "▸"} Exchange ${id}`, toggle: () => { this.model.toggleExchange(id); } });
 			}
 			items.push({ label: `  ${this.model.processLine(process.id)}`, toggle: () => { this.model.toggleProcess(process.id); } });
 			for (const block of process.blocks) {
 				if (block.kind === "thinking") {
-					items.push({ label: `    ${this.model.thinkingTitle(block.message, block.index, block.trace, false)}`, toggle: () => { this.model.toggleThinking(block.message, block.index); } });
+					items.push({ label: `    ${this.model.isThinkingOpen(block.message, block.index) ? "▾" : "▸"} ${this.model.thinkingTitle(block.message, block.index, block.trace, false)}`, toggle: () => {
+						if (this.model.toggleThinking(block.message, block.index) && !this.model.isProcessOpen(process.id)) this.model.toggleProcess(process.id);
+					} });
 				} else {
 					const id = block.key.slice(5);
 					const parts = this.model.titleParts(id);
-					items.push({ label: `    ⚙ ${parts?.name ?? "tool"}  ${parts?.argument ?? ""}  ${parts?.stats ?? ""}`, toggle: () => { this.model.toggle(id); } });
+					items.push({ label: `    ${this.model.isOpen(id) ? "▾" : "▸"} ⚙ ${parts?.name ?? "tool"}  ${parts?.argument ?? ""}  ${parts?.stats ?? ""}`, toggle: () => {
+						if (this.model.toggle(id) && !this.model.isProcessOpen(process.id)) this.model.toggleProcess(process.id);
+					} });
 				}
 			}
 		}
@@ -48,13 +52,18 @@ export class FoldPicker {
 	render(width: number): string[] {
 		const rows = this.items();
 		const theme = this.getTheme();
-		const lines = [theme.fg("dim", truncateToWidth("Fold exchange / process / block", width, "…"))];
-		if (!rows.length) return [...lines, theme.fg("dim", "  No blocks yet")];
+		const fit = (content: string) => {
+			const clipped = truncateToWidth(content, width, "…");
+			return theme.bg("customMessageBg", clipped) + theme.bg("customMessageBg", " ".repeat(Math.max(0, width - visibleWidth(clipped))));
+		};
+		const border = fit(theme.fg("dim", "─".repeat(width)));
+		const lines = [border, fit(theme.fg("dim", "Fold exchange / process / block"))];
+		if (!rows.length) return [...lines, fit(theme.fg("dim", "  No blocks yet")), border];
 		this.selected = Math.min(this.selected, rows.length - 1);
 		return [...lines, ...rows.map((row, index) => {
 			const mark = index === this.selected ? ">" : " ";
-			return mark + theme.fg("dim", truncateToWidth(` ${row.label}`, Math.max(0, width - 1), "…"));
-		})];
+			return fit(mark + theme.fg("dim", truncateToWidth(` ${row.label}`, Math.max(0, width - 1), "…")));
+		}), border];
 	}
 
 	handleInput(data: string): void {
