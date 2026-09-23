@@ -63,7 +63,7 @@ const FOLD_KEYS = {
 	processKey: { default: "ctrl+alt+f", env: "PI_EXCHANGE_STATS_PROCESS_KEY" },
 	exchangeKey: { default: "ctrl+alt+e", env: "PI_EXCHANGE_STATS_EXCHANGE_KEY" },
 	pickerKey: { default: "ctrl+alt+s", env: "PI_EXCHANGE_STATS_PICKER_KEY" },
-	cursorKey: { default: "ctrl+alt+c", env: "PI_EXCHANGE_STATS_CURSOR_KEY" },
+	cursorKey: { default: "ctrl+alt+g", env: "PI_EXCHANGE_STATS_CURSOR_KEY" },
 } as const;
 const CURSOR_SETTING = { cursorMode: { default: false, env: "PI_EXCHANGE_STATS_CURSOR_MODE", parseEnv: (value: string) => value === "true" } } as const;
 const SUMMARY_SETTING = { summaryModel: { default: "", env: "PI_EXCHANGE_STATS_SUMMARY_MODEL" } } as const;

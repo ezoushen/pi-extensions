@@ -33,9 +33,9 @@ function mount(value) {
 
 test("cursor shortcut is absent by default and its default does not collide with Pi", () => {
  const defaults = Object.values(KEYBINDINGS).flatMap(({ defaultKeys }) => Array.isArray(defaultKeys) ? defaultKeys : [defaultKeys]);
- assert.equal(defaults.includes("ctrl+alt+c"), false);
+ assert.equal(defaults.includes("ctrl+alt+g"), false);
  const mounted = mount();
- try { assert.equal(mounted.shortcuts.has("ctrl+alt+c"), false); } finally { mounted.close(); }
+ try { assert.equal(mounted.shortcuts.has("ctrl+alt+g"), false); } finally { mounted.close(); }
 });
 
 test("cursor moves through transcript process lines, toggles the third and returns focus on Escape", async () => {
@@ -44,7 +44,7 @@ test("cursor moves through transcript process lines, toggles the third and retur
   m.handlers.get("before_agent_start")({}, m.ctx);
   const content = [item("first"), { type: "text", text: "between" }, item("second"), { type: "text", text: "between" }, item("third")];
   m.handlers.get("message_update")({ message: snapshot(content), assistantMessageEvent: { type: "text_delta" } }, m.ctx);
-  const active = m.shortcuts.get("ctrl+alt+c")(m.ctx);
+  const active = m.shortcuts.get("ctrl+alt+g")(m.ctx);
   const cursor = m.cursor();
   cursor.handleInput("\x1b[B");
   cursor.handleInput("\x1b[B");
@@ -67,7 +67,7 @@ test("cursor moves from an open process line to its block title", async () => {
   m.handlers.get("before_agent_start")({}, m.ctx);
   m.handlers.get("message_update")({ message: snapshot([item("first"), item("second")]), assistantMessageEvent: { type: "text_delta" } }, m.ctx);
   m.shortcuts.get("ctrl+alt+f")(m.ctx);
-  const active = m.shortcuts.get("ctrl+alt+c")(m.ctx), cursor = m.cursor();
+  const active = m.shortcuts.get("ctrl+alt+g")(m.ctx), cursor = m.cursor();
   cursor.handleInput("\x1b[B");
   const first = () => new ToolExecutionComponent("bash", "first", { command: "first" }, {}, undefined, { requestRender() {} }, ".").render(80).join("\n");
   const second = () => new ToolExecutionComponent("bash", "second", { command: "second" }, {}, undefined, { requestRender() {} }, ".").render(80).join("\n");

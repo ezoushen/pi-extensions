@@ -27,7 +27,7 @@ These controls work while an exchange streams and change only the display. In
 fullscreen mode, left click a process line or block title to toggle it.
 
 An experimental transcript cursor is available with `cursorMode: true`. Press
-`ctrl+alt+c` to enter it, Up/Down to move through process lines and the block
+`ctrl+alt+g` to enter it, Up/Down to move through process lines and the block
 titles of open processes, Enter to toggle the highlighted item, and Escape to
 return to the editor. The selected title also appears in the status line, since
 regular terminal scrollback can leave the highlighted line above the viewport.
@@ -85,7 +85,7 @@ the usage object Pi received.
 The optional `exchange-stats.json` file in Pi's agent directory configures
 `processKey`, `exchangeKey`, and `pickerKey`. Their defaults are `ctrl+alt+f`,
 `ctrl+alt+e`, and `ctrl+alt+s`. The experimental `cursorKey` defaults to
-`ctrl+alt+c`. Each key value must be a modified Pi key such as
+`ctrl+alt+g`. Each key value must be a modified Pi key such as
 `ctrl+alt+x` or `alt+enter`; an invalid value uses its default and produces one warning.
 The matching environment variables are `PI_EXCHANGE_STATS_PROCESS_KEY`,
 `PI_EXCHANGE_STATS_EXCHANGE_KEY`, `PI_EXCHANGE_STATS_PICKER_KEY`, and
