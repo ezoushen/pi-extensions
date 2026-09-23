@@ -35,3 +35,22 @@ test("reported reasoning usage is shown as measured tokens", () => {
 	assert.match(model.thinkingTitle(message, 0, "thought", true), /17 tok · 0 tok\/s/);
 	assert.doesNotMatch(model.thinkingTitle(message, 0, "thought", true), /~/);
 });
+
+test("thinking title shows the last complete sentence while a later line streams", () => {
+	const model = new ToolFoldModel(() => 1000);
+	const message = { timestamp: 55 };
+	const trace = "Need to retrieve the CURSOR_BRIDGE_MODE value without exposing secrets.\n\nGrepping for the spec";
+	model.observeThinking(message, { type: "thinking_delta", contentIndex: 0, delta: trace });
+	assert.match(model.thinkingTitle({ timestamp: 55 }, 0, trace, true), /^◈ Need to retrieve the CURSOR_BRIDGE_MODE value without exposing secrets\. · /);
+});
+
+test("thinking keeps its placeholder until a sentence completes", () => {
+	const model = new ToolFoldModel(() => 1000);
+	assert.match(model.thinkingTitle({ timestamp: 56 }, 0, "**Grepping** for the `spec`", true), /^◈ Thinking · /);
+});
+
+test("thinking headline strips markdown markers", () => {
+	const model = new ToolFoldModel(() => 1000);
+	assert.match(model.thinkingTitle({ timestamp: 57 }, 0, "- **Reading** the `spec`.\npartial", true), /^◈ Reading the spec\. · /);
+	assert.match(model.thinkingTitle({ timestamp: 58 }, 0, "Read the spec\npartial", true), /^◈ Read the spec · /);
+});

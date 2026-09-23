@@ -1,5 +1,6 @@
 import { MouseRegion, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ToolFoldModel } from "./tool-fold.ts";
+import { fitThinkingLine } from "./thinking-width.ts";
 
 interface ToolComponent {
 	toolCallId: string;
@@ -20,8 +21,7 @@ interface TitleTheme {
 }
 
 function truncateProcessLine(text: string, width: number): string {
-	// Pi's truncator inserts a reset before the ellipsis even for plain input.
-	return truncateToWidth(text, width, "…").replace(/\x1b\[0m(?=…)/g, "");
+	return fitThinkingLine(text, width);
 }
 
 /** Installs a reversible display wrapper; unsupported Pi components stay native. */
@@ -174,7 +174,7 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 						: new Text(getTheme()?.fg("dim", processText) ?? processText, component.outputPad, 0).render(width);
 					if (process && !model.isProcessOpen(process.id)) return processLine;
 					if (model.isThinkingOpen(message, run.index)) return [...processLine, ...(native as MouseRegion).child.render(width)];
-					const title = truncateToWidth(model.thinkingTitle(message, run.index, run.trace, component.isStreaming), width - padding * 2, "…");
+					const title = fitThinkingLine(model.thinkingTitle(message, run.index, run.trace, component.isStreaming), width - padding * 2);
 					return [...processLine, ...new Text(getTheme()?.fg("dim", title) ?? title, component.outputPad, 0).render(width)];
 				},
 				invalidate() {},
