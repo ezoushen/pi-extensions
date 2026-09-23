@@ -20,6 +20,7 @@ function mount() {
 			entries.push({ type, data });
 		},
 		registerCommand() {},
+		registerShortcut() {},
 	});
 
 	const context = {

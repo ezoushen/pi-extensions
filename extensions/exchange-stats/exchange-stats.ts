@@ -46,9 +46,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AssistantMessageComponent, keyHint, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { announce } from "../../shared/announce.ts";
+import { resolveSettings, type SettingsRuntime } from "../../shared/settings.ts";
+import { FoldPicker } from "./src/fold-picker.ts";
 import { ToolFoldModel } from "./src/tool-fold.ts";
 import { installThinkingFold, installToolFold } from "./src/tool-render.ts";
 import { Box, Text } from "@earendil-works/pi-tui";
+import type { KeyId } from "@earendil-works/pi-tui";
 
 const ENTRY_TYPE = "exchange-stats";
 const STATUS_KEY = "exchange";
@@ -56,6 +59,11 @@ const STATUS_KEY = "exchange";
 const TICK_MS = 1_000;
 /** Above this share of wall time, tool execution is called out in the summary. */
 const TOOL_SHARE_NOTE = 0.25;
+const FOLD_KEYS = {
+	processKey: { default: "ctrl+alt+f", env: "PI_EXCHANGE_STATS_PROCESS_KEY" },
+	exchangeKey: { default: "ctrl+alt+e", env: "PI_EXCHANGE_STATS_EXCHANGE_KEY" },
+	pickerKey: { default: "ctrl+alt+s", env: "PI_EXCHANGE_STATS_PICKER_KEY" },
+} as const;
 
 interface TokenTotals {
 	input: number;
@@ -216,12 +224,31 @@ function unionMs(runs: ToolRun[]): number {
 	return total + (end - start);
 }
 
-export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof ToolExecutionComponent = ToolExecutionComponent) {
+export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof ToolExecutionComponent = ToolExecutionComponent, settingsRuntime: SettingsRuntime = {}) {
 	const toolFold = new ToolFoldModel();
-	let themeContext: { ui: { theme?: { fg(color: "dim", text: string): string } } } | undefined;
+	let themeContext: { ui: { theme?: { fg(color: "dim", text: string): string }; setStatus(key: string, value: string): void } } | undefined;
 	const getTitleTheme = () => themeContext?.ui.theme;
+	let lastStatus = "";
+	const requestRender = () => { if (themeContext) themeContext.ui.setStatus(STATUS_KEY, lastStatus); };
 	const toolPatch = installToolFold(toolComponent, toolFold, getTitleTheme);
-	const thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold, getTitleTheme);
+	const thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold, getTitleTheme, requestRender);
+	const resolvedKeys = resolveSettings("exchange-stats", FOLD_KEYS, {
+		cwd: process.cwd(), hasUI: true, isProjectTrusted: () => false,
+	}, settingsRuntime);
+	const validKey = (value: unknown): value is KeyId => {
+		if (typeof value !== "string") return false;
+		const parts = value.split("+");
+		const base = parts.pop();
+		return parts.length > 0 && new Set(parts).size === parts.length &&
+			parts.every((part) => ["ctrl", "alt", "shift", "super"].includes(part)) &&
+			base !== undefined && (/^[a-z0-9]$/.test(base) || ["enter", "escape", "tab", "space", "backspace", "delete", "up", "down", "left", "right", "home", "end"].includes(base));
+	};
+	const keys = Object.fromEntries(Object.entries(FOLD_KEYS).map(([name, definition]) => {
+		const value = resolvedKeys[name as keyof typeof FOLD_KEYS].value;
+		return [name, validKey(value) ? value : definition.default];
+	})) as Record<keyof typeof FOLD_KEYS, KeyId>;
+	const invalidKey = Object.entries(FOLD_KEYS).some(([name]) => !validKey(resolvedKeys[name as keyof typeof FOLD_KEYS].value));
+	let warnedAboutKey = false;
 	let warnedAboutToolFold = false;
 	let warnedAboutThinkingFold = false;
 	const sessionTotals = {
@@ -253,8 +280,20 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 
 	function setStatus(text: string, ctx: StatusContext): void {
 		if (!ctx.hasUI) return;
+		lastStatus = text;
 		ctx.ui.setStatus(STATUS_KEY, text);
 	}
+
+	pi.registerShortcut(keys.processKey, { description: "Toggle latest process", handler: (ctx) => {
+		if (toolFold.toggleLatestProcess() !== undefined) { themeContext = ctx; requestRender(); }
+	} });
+	pi.registerShortcut(keys.exchangeKey, { description: "Toggle latest exchange", handler: (ctx) => {
+		if (toolFold.toggleLatestExchange() !== undefined) { themeContext = ctx; requestRender(); }
+	} });
+	pi.registerShortcut(keys.pickerKey, { description: "Choose exchange, process or block to fold", handler: async (ctx) => {
+		if (!ctx.hasUI) return;
+		await ctx.ui.custom((tui, theme, _keybindings, done) => new FoldPicker(toolFold, () => ctx.ui.theme ?? theme, () => tui.requestRender(), () => done(undefined)), { overlay: true });
+	} });
 
 	/** Live line: elapsed, turns finished, and the tool currently running. */
 	function liveStatusText(): string {
@@ -372,6 +411,10 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 
 	pi.on("session_start", (_event, ctx) => {
 		themeContext = ctx;
+		if (invalidKey && !warnedAboutKey) {
+			announce(ctx, "exchange-stats: invalid fold shortcut; using default key", "warning", "exchange-stats:invalid-fold-key");
+			warnedAboutKey = true;
+		}
 		if (!toolPatch.installed && !warnedAboutToolFold) {
 			announce(ctx, "exchange-stats: tool folding unavailable; Pi tool rows remain native", "warning");
 			warnedAboutToolFold = true;
@@ -414,6 +457,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		}
 
 		running = true;
+		toolFold.beginExchange();
 		startedAt = Date.now();
 		promptCount = 1;
 		exchangeIndex++;
