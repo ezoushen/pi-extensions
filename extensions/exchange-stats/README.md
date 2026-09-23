@@ -1,14 +1,17 @@
 # pi-exchange-stats
 
 Show timing, token, cache, cost, and tool-use statistics for each Pi exchange.
-Tool calls render as one-line titles with their argument, status, duration, and
-result line count.
-Thinking runs render as one-line titles. While streaming, each title shows elapsed
-time, thinking tokens and rate; a `~` marks token estimates when the provider has
-not reported reasoning usage. Settled titles show duration and word count. Opening
-a thinking title shows Pi's full trace, regardless of Pi's hide-thinking setting.
-Tool and thinking titles use the active Pi theme's dim color. Assistant text and
-opened native content keep Pi's own styling.
+Each run of thinking and tool calls between pieces of assistant text starts folded
+as one process line, even when it spans assistant messages or turns. The line shows
+block counts and total wall time, or the current block and its live time while
+streaming. At the next fold level, each block has a one-line title in stream order.
+Tool titles show the argument, status, duration, and result line count. Thinking
+titles show elapsed time, thinking tokens and rate while streaming; a `~` marks
+token estimates when the provider has not reported reasoning usage. Settled titles
+show duration and word count. Opening a thinking block shows Pi's full trace,
+regardless of Pi's hide-thinking setting. Process lines and block titles use the
+active Pi theme's dim color. Assistant text and opened native content keep Pi's own
+styling.
 
 An **exchange** is one uninterrupted work span from a submitted prompt until Pi has
 nothing left to do automatically. A **turn** is one model response plus the tools it
@@ -60,9 +63,9 @@ pi install npm:pi-exchange-stats
 ```
 
 Submit a prompt that makes at least one tool call and produces thinking, then wait
-for Pi to settle. Check that the thinking title counts while live and keeps its
-final duration and word count.
-Check that the tool title shows its status, duration, and result line count. Expand the
+for Pi to settle. Check that one process line covers each stretch between pieces of
+assistant text, that its counts and live activity change as blocks arrive, and that
+its total time stops when the process completes. Expand the
 exchange card and verify that its turn count, output tokens, tool names, and wall-time
 breakdown match the transcript. Run `/exstats` and confirm that the session card equals
 the sum of completed exchanges. To check parallel-tool accounting, run two overlapping

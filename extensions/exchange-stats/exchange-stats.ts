@@ -1,5 +1,5 @@
 /**
- * exchange-stats.ts — exchange timing and cost, with one-line tool and thinking titles.
+ * exchange-stats.ts — exchange timing and cost, with process lines and block titles.
  * Per-turn card detail remains available on demand.
  *
  * An *exchange* is one uninterrupted work span: from a prompt you submitted until
@@ -395,10 +395,14 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	pi.on("message_update", (event) => {
 		if (event.message.role !== "assistant") return;
 		toolFold.observeThinking(event.message, event.assistantMessageEvent, event.message.usage?.reasoning);
+		toolFold.ingest(event.message);
 	});
 
 	pi.on("message_end", (event) => {
-		if (event.message.role === "assistant") toolFold.settleThinking(event.message);
+		if (event.message.role === "assistant") {
+			toolFold.ingest(event.message);
+			toolFold.settleThinking(event.message);
+		}
 	});
 
 	pi.on("before_agent_start", (_event, ctx) => {
@@ -582,6 +586,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		if (waitingMs > 0) parts.push(`waiting ${fmtDuration(waitingMs)}`);
 		setStatus(parts.join(" · "), ctx);
 
+		toolFold.endExchange();
 		resetExchangeState();
 	});
 

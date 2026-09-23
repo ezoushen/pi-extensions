@@ -17,6 +17,11 @@ interface TitleTheme {
 	fg(color: "dim", text: string): string;
 }
 
+function truncateProcessLine(text: string, width: number): string {
+	// Pi's truncator inserts a reset before the ellipsis even for plain input.
+	return truncateToWidth(text, width, "…").replace(/\x1b\[0m(?=…)/g, "");
+}
+
 /** Installs a reversible display wrapper; unsupported Pi components stay native. */
 export function installToolFold(componentClass: ToolClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined): { installed: boolean; restore: () => void } {
 	const prototype = componentClass?.prototype;
@@ -26,7 +31,13 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 	function folded(this: ToolComponent, width: number): string[] {
 		try {
 			model.observe(this.toolCallId, this.toolName, this.args, this.result);
-			if (model.isOpen(this.toolCallId)) return original.call(this, width);
+			const process = model.processForTool(this.toolCallId);
+			if (process && !model.isProcessOpen(process.id) && !model.isProcessLead(process.id, `tool:${this.toolCallId}`)) return [];
+			const processText = process && model.isProcessLead(process.id, `tool:${this.toolCallId}`)
+				? truncateProcessLine(model.processLine(process.id), width) : undefined;
+			const processLine = processText === undefined ? [] : [getTheme()?.fg("dim", processText) ?? processText];
+			if (process && !model.isProcessOpen(process.id)) return processLine;
+			if (model.isOpen(this.toolCallId)) return [...processLine, ...original.call(this, width)];
 			const parts = model.titleParts(this.toolCallId);
 			if (!parts || width <= 0) return original.call(this, width);
 			const name = truncateToWidth(`⚙ ${parts.name}`, width, "");
@@ -37,7 +48,7 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 				? truncateToWidth(`  ${parts.argument}`, argumentWidth, "…")
 				: "";
 			const title = name + argument + stats;
-			return [getTheme()?.fg("dim", title) ?? title];
+			return [...processLine, getTheme()?.fg("dim", title) ?? title];
 		} catch {
 			return original.call(this, width);
 		}
@@ -49,6 +60,7 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 
 
 interface Message {
+	timestamp?: number;
 	content: Array<{ type: string; thinking?: string }>;
 }
 
@@ -70,7 +82,6 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 	const prototype = componentClass?.prototype;
 	const original = prototype?.updateContent;
 	if (typeof original !== "function") return { installed: false, restore() {} };
-	const open = new WeakMap<AssistantComponent, Set<number>>();
 
 	function foldContent(this: AssistantComponent, message: Message, isStreaming?: boolean): void {
 		if (!Array.isArray(message?.content) || !this.contentContainer?.children) {
@@ -106,23 +117,36 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 			original.call(this, message, isStreaming);
 			return;
 		}
-		const opened = open.get(this) ?? new Set<number>();
-		open.set(this, opened);
 		runs.forEach((run, runIndex) => {
 			const native = children[regions[runIndex]];
+			const process = model.processForThinking(message, run.index);
+			const lead = process && model.isProcessLead(process.id, `thinking:${message.timestamp}:${run.index}`);
+			const preceding = children[regions[runIndex] - 1];
+			if (process && !lead && preceding?.constructor.name === "Spacer") {
+				children[regions[runIndex] - 1] = {
+					constructor: preceding.constructor,
+					render(width: number) { return model.isProcessOpen(process.id) ? preceding.render(width) : []; },
+				};
+			}
 			const onMouse = (event: { type: string; button: string }) => {
 				if (event.type !== "click" || event.button !== "left") return undefined;
-				if (opened.has(runIndex)) opened.delete(runIndex);
-				else opened.add(runIndex);
+				if (process && !model.isProcessOpen(process.id)) model.toggleProcess(process.id);
+				else model.toggleThinking(message, run.index);
 				folded.call(this, message, isStreaming);
 				return { handled: true };
 			};
 			const component = this;
-			const child = opened.has(runIndex) ? (native as MouseRegion).child : {
+			const child = {
 				render(width: number) {
+					if (process && !model.isProcessOpen(process.id) && !lead) return [];
 					const padding = Math.min(component.outputPad, Math.max(0, Math.floor((width - 1) / 2)));
+					const processText = lead ? truncateProcessLine(model.processLine(process!.id), width - padding * 2) : undefined;
+					const processLine = processText === undefined ? []
+						: new Text(getTheme()?.fg("dim", processText) ?? processText, component.outputPad, 0).render(width);
+					if (process && !model.isProcessOpen(process.id)) return processLine;
+					if (model.isThinkingOpen(message, run.index)) return [...processLine, ...(native as MouseRegion).child.render(width)];
 					const title = truncateToWidth(model.thinkingTitle(message, run.index, run.trace, component.isStreaming), width - padding * 2, "…");
-					return new Text(getTheme()?.fg("dim", title) ?? title, component.outputPad, 0).render(width);
+					return [...processLine, ...new Text(getTheme()?.fg("dim", title) ?? title, component.outputPad, 0).render(width)];
 				},
 				invalidate() {},
 			};
