@@ -59,7 +59,8 @@ unknown duration.
 Pi must emit its documented session, agent, turn, tool, and UI-prompt lifecycle events.
 Display wrappers are installed at `session_start` and released at `session_shutdown`;
 loading the extension without a session leaves Pi's component prototypes unchanged.
-Overlapping extension instances share the wrappers until the last session releases them.
+Overlapping extension instances share the wrappers until the last session releases them;
+each component renders with the session that received its message or tool call.
 Tool folding uses Pi's `ToolExecutionComponent.render` interface from version 0.87.1.
 Thinking folding uses `AssistantMessageComponent.updateContent` and Pi's
 `message_update` events. Its clock starts at the first thinking delta and stops

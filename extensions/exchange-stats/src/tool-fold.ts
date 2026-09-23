@@ -333,6 +333,10 @@ export class ToolFoldModel {
 		return this.processByBlock.get(`thinking:${message.timestamp}:${index}`);
 	}
 	processForTool(id: string): Process | undefined { return this.processByBlock.get(`tool:${id}`); }
+	/** Whether this model has ingested or run the tool call, so its session owns the component. */
+	ownsTool(id: string): boolean { return this.processByBlock.has(`tool:${id}`) || this.blocks.has(id); }
+	/** Whether this model has ingested the assistant message, so its session owns the component. */
+	ownsMessage(message: ThinkingMessage): boolean { return typeof message?.timestamp === "number" && this.seenContent.has(message.timestamp); }
 	isProcessLead(id: string, key: string): boolean { return this.processList.find((process) => process.id === id)?.blocks[0]?.key === key; }
 	toggleProcess(id: string): boolean | undefined {
 		const process = this.processList.find((item) => item.id === id);

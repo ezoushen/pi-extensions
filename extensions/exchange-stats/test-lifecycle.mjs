@@ -13,9 +13,9 @@ function mount() {
 	});
 	const ctx = { hasUI: true, model: { id: "test" }, ui: { setStatus() {}, notify() {} } };
 	return { start: () => handlers.get("session_start")({}, ctx), stop: () => handlers.get("session_shutdown")(),
-		feedThinking(trace) {
+		feedThinking(trace, timestamp = 200) {
 			handlers.get("before_agent_start")({}, ctx);
-			const message = { role: "assistant", timestamp: 200, content: [{ type: "text", text: "next" }, { type: "thinking", thinking: trace }] };
+			const message = { role: "assistant", timestamp, content: [{ type: "text", text: "next" }, { type: "thinking", thinking: trace }] };
 			handlers.get("message_update")({ message, assistantMessageEvent: { type: "thinking_delta", contentIndex: 1, delta: trace } }, ctx);
 		},
 		feed(id) {
@@ -27,9 +27,9 @@ function mount() {
 }
 
 const renderTool = (id) => new ToolExecutionComponent("bash", id, { command: id }, {}, undefined, { requestRender() {} }, ".").render(80).join("\n");
-const renderThinking = (trace) => {
+const renderThinking = (trace, timestamp = 200) => {
 	const component = new AssistantMessageComponent();
-	component.updateContent({ role: "assistant", timestamp: 200, content: [{ type: "text", text: "next" }, { type: "thinking", thinking: trace }] }, true);
+	component.updateContent({ role: "assistant", timestamp, content: [{ type: "text", text: "next" }, { type: "thinking", thinking: trace }] }, true);
 	return component.render(80).join("\n");
 };
 
@@ -89,6 +89,24 @@ test("overlapping instances share one wrapper and only the last owner restores i
 		second.stop();
 		assert.equal(ToolExecutionComponent.prototype.render, toolRender);
 		assert.equal(AssistantMessageComponent.prototype.updateContent, thinkingUpdate);
+	} finally { first.stop(); second.stop(); }
+});
+
+test("overlapping owners each render their own tool and thinking components", () => {
+	const first = mount(), second = mount();
+	try {
+		first.start();
+		first.feed("first");
+		first.feedThinking("checking the first session", 300);
+		second.start();
+		second.feed("second");
+		second.feedThinking("checking the second session", 400);
+		assert.match(renderTool("first"), /▸.*⚙1/);
+		assert.equal(renderTool("first").match(/⚙ bash/g)?.length ?? 0, 0);
+		assert.match(renderTool("second"), /▸.*⚙1/);
+		assert.match(renderThinking("checking the first session", 300), /▸.*◈1/);
+		assert.doesNotMatch(renderThinking("checking the first session", 300), /checking the first session/);
+		assert.match(renderThinking("checking the second session", 400), /▸.*◈1/);
 	} finally { first.stop(); second.stop(); }
 });
 

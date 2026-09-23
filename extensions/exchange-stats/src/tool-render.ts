@@ -63,9 +63,17 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 	const hadOwnMouse = prototype && Object.hasOwn(prototype, "handleMouse");
 	if (typeof original !== "function") return { installed: false, restore() {} };
 
+	// Overlapping sessions share this wrapper. A component belongs to the session whose
+	// model knows its tool call; the latest owner renders calls no session has seen yet.
+	const ownerFor = (component: ToolComponent): ToolOwner => {
+		const all = Array.from(owners);
+		return all.findLast((owner) => owner.model.ownsTool(component.toolCallId)) ?? all.at(-1)!;
+	};
+
 	function folded(this: ToolComponent, width: number): string[] {
 		if (owners.size === 0) return original.call(this, width);
 		try {
+			const { model, getTheme, getOutputPad, getHomeDirectory } = ownerFor(this);
 			model.observe(this.toolCallId, this.toolName, this.args, this.result);
 			const process = model.processForTool(this.toolCallId);
 			if (process && !model.isProcessOpen(process.id) && !model.isProcessLead(process.id, `tool:${this.toolCallId}`)) return [];
@@ -99,6 +107,7 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 	prototype.render = folded;
 	function foldedMouse(this: ToolComponent, event: { type: string; button: string; y: number; width: number; height: number }) {
 		if (owners.size === 0) return originalMouse?.call(this, event);
+		const { model } = ownerFor(this);
 		const process = model.processForTool(this.toolCallId);
 		if (event.type === "click" && event.button === "left" && event.y === 0 && process && model.isProcessLead(process.id, `tool:${this.toolCallId}`)) {
 			model.toggleProcess(process.id);
@@ -122,11 +131,8 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 			if (prototype.handleMouse === originalMouse) prototype.handleMouse = foldedMouse;
 		}
 		owners.add(owner);
-		({ model, getTheme, getOutputPad, getHomeDirectory } = owner);
 		return { installed: true, restore() {
-			if (!owners.delete(owner)) return;
-			const latest = Array.from(owners).at(-1);
-			if (latest) { ({ model, getTheme, getOutputPad, getHomeDirectory } = latest); return; }
+			if (!owners.delete(owner) || owners.size > 0) return;
 			// A later wrapper may still call ours; keep it dormant and reusable while attached.
 			if (prototype.render === folded && prototype.handleMouse === foldedMouse) toolOwners.delete(prototype);
 			if (prototype.render === folded) prototype.render = original;
@@ -167,7 +173,14 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 	const original = prototype?.updateContent;
 	if (typeof original !== "function") return { installed: false, restore() {} };
 
+	// As for tools: the session whose model ingested the message owns its component.
+	const ownerFor = (message: Message): ThinkingOwner => {
+		const all = Array.from(owners);
+		return all.findLast((owner) => owner.model.ownsMessage(message)) ?? all.at(-1)!;
+	};
+
 	function foldContent(this: AssistantComponent, message: Message, isStreaming?: boolean): void {
+		const { model, getTheme, requestRender, observeOutputPad } = ownerFor(message);
 		observeOutputPad(this.outputPad);
 		if (!Array.isArray(message?.content) || !this.contentContainer?.children) {
 			original.call(this, message, isStreaming);
@@ -255,11 +268,8 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 	const owners = new Set<ThinkingOwner>();
 	const add = (owner: ThinkingOwner): Patch => {
 		owners.add(owner);
-		({ model, getTheme, requestRender, observeOutputPad } = owner);
 		return { installed: true, restore() {
-			if (!owners.delete(owner)) return;
-			const latest = Array.from(owners).at(-1);
-			if (latest) { ({ model, getTheme, requestRender, observeOutputPad } = latest); return; }
+			if (!owners.delete(owner) || owners.size > 0) return;
 			// A later wrapper may still call ours; keep it dormant and reusable while attached.
 			if (prototype.updateContent === folded) thinkingOwners.delete(prototype);
 			if (prototype.updateContent === folded) prototype.updateContent = original;
