@@ -16,9 +16,10 @@ styling.
 Press `ctrl+alt+f` to toggle the latest process between its line and block titles.
 Press `ctrl+alt+e` to open or fold every process in the latest exchange. Press
 `ctrl+alt+s` to open the picker; use Up/Down and Enter to toggle an exchange,
-process, or block, and Escape to close it. These controls work while an exchange
-streams and change only the display. In fullscreen mode, left click a process
-line or block title to toggle it.
+process, or block, and Escape to close it. The picker marks open items; opening a
+block also opens its process, while folding that block leaves the process open.
+These controls work while an exchange streams and change only the display. In
+fullscreen mode, left click a process line or block title to toggle it.
 
 An **exchange** is one uninterrupted work span from a submitted prompt until Pi has
 nothing left to do automatically. A **turn** is one model response plus the tools it

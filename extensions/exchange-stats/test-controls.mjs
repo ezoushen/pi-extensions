@@ -28,7 +28,7 @@ function mount(settingsRuntime = {}) {
  }, ToolExecutionComponent, settingsRuntime);
  const ctx = { hasUI: true, model: { id: "test" }, ui: {
   setStatus(key, value) { statuses.push([key, value]); }, notify(message) { warnings.push(message); },
-  custom(factory) { picker = factory({ requestRender() { statuses.push(["render"]); } }, { fg(color, text) { assert.equal(color, "dim"); return `\x1b[2m${text}\x1b[0m`; } }, undefined, () => {}); return Promise.resolve(); },
+  custom(factory) { picker = factory({ requestRender() { statuses.push(["render"]); } }, { fg(color, text) { assert.equal(color, "dim"); return `\x1b[2m${text}\x1b[0m`; }, bg(color, text) { assert.equal(color, "customMessageBg"); return `\x1b[48;2;20;20;20m${text}\x1b[0m`; } }, undefined, () => {}); return Promise.resolve(); },
  } };
  handlers.get("session_start")({}, ctx);
  return { handlers, shortcuts, warnings, statuses, ctx, picker: () => picker, close() { handlers.get("session_shutdown")(); } };
@@ -73,10 +73,10 @@ test("picker toggles one older tool block and renders dim rows with an undimmed 
   feed(m, 22, [toolItem("new")]);
   await m.shortcuts.get("ctrl+alt+s")(m.ctx);
   const picker = m.picker();
-  assert.match(picker.render(80)[0], /\x1b\[2m/);
-  assert.match(picker.render(80)[1], /^>\x1b\[2m/);
-  m.ctx.ui.theme = { fg(color, text) { assert.equal(color, "dim"); return `\x1b[38;2;90;90;90m${text}\x1b[0m`; } };
-  assert.match(picker.render(80)[1], /^>\x1b\[38;2;90;90;90m/);
+  assert.match(picker.render(80)[1], /\x1b\[2m/);
+  assert.match(picker.render(80)[2], /\x1b\[48;2;20;20;20m>\x1b\[2m/);
+  m.ctx.ui.theme = { fg(color, text) { assert.equal(color, "dim"); return `\x1b[38;2;90;90;90m${text}\x1b[0m`; }, bg(color, text) { assert.equal(color, "customMessageBg"); return text; } };
+  assert.match(picker.render(80)[2], />\x1b\[38;2;90;90;90m/);
   picker.handleInput("\x1b[B");
   picker.handleInput("\r");
   picker.handleInput("\x1b[B");
@@ -128,5 +128,46 @@ test("fullscreen mouse dispatch toggles a process line and a block title once", 
   assert.equal(tool.handleMouse(click(0)).handled, true);
   assert.equal(renders, 1);
   assert.notEqual(tool.render(80).join("\n"), before);
+ } finally { m.close(); }
+});
+
+test("picker rows cover the overlay width with an opaque frame", async () => {
+ const { visibleWidth } = await import("@earendil-works/pi-tui");
+ const m = mount();
+ try {
+  m.handlers.get("before_agent_start")({}, m.ctx);
+  feed(m, 41, [toolItem("bounded")]);
+  await m.shortcuts.get("ctrl+alt+s")(m.ctx);
+  const lines = m.picker().render(60);
+  assert.ok(lines.length >= 4);
+  assert.ok(lines[0].includes("─") || lines[0].includes("╭"));
+  assert.ok(lines.at(-1).includes("─") || lines.at(-1).includes("╰"));
+  assert.ok(lines.every((line) => visibleWidth(line) === 60), lines.map(visibleWidth).join(", "));
+  assert.ok(lines.slice(1, -1).every((line) => /\x1b\[48;2;20;20;20m +\x1b\[0m$/.test(line)));
+ } finally { m.close(); }
+});
+
+test("picker Enter on a block inside a folded process reveals native output immediately", async () => {
+ const m = mount();
+ try {
+  m.handlers.get("before_agent_start")({}, m.ctx);
+  feed(m, 42, [toolItem("selected"), toolItem("sibling")]);
+  await m.shortcuts.get("ctrl+alt+s")(m.ctx);
+  const picker = m.picker();
+  picker.handleInput("\x1b[B");
+  picker.handleInput("\x1b[B");
+  const selected = renderTool("selected"), sibling = renderTool("sibling");
+  const beforeSibling = sibling.render(80).join("\n");
+  assert.match(selected.render(80).join("\n"), /▸/);
+  picker.handleInput("\r");
+  const rendered = selected.render(80).join("\n");
+  assert.match(rendered, /▾/);
+  assert.match(rendered, /"command": "selected"/);
+  assert.notEqual(sibling.render(80).join("\n"), beforeSibling);
+  assert.match(picker.render(80).join("\n"), /▾.*selected/);
+  picker.handleInput("\r");
+  assert.match(selected.render(80).join("\n"), /▾.*⚙ bash.*selected/s);
+  assert.doesNotMatch(selected.render(80).join("\n"), /"command": "selected"/);
+  assert.match(picker.render(80).join("\n"), /▸.*selected/);
  } finally { m.close(); }
 });
