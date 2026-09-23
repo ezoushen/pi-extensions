@@ -102,7 +102,7 @@ test("overlapping owners each render their own tool and thinking components", ()
 		second.feed("second");
 		second.feedThinking("checking the second session", 400);
 		assert.match(renderTool("first"), /▸.*⚙1/);
-		assert.equal(renderTool("first").match(/⚙ bash/g)?.length ?? 0, 0);
+		assert.doesNotMatch(renderTool("first"), /⚙ bash  first/);
 		assert.match(renderTool("second"), /▸.*⚙1/);
 		assert.match(renderThinking("checking the first session", 300), /▸.*◈1/);
 		assert.doesNotMatch(renderThinking("checking the first session", 300), /checking the first session/);
@@ -127,7 +127,7 @@ test("a later wrapper stays installed and delegates to native output after shutd
 		next.start();
 		next.feed("again");
 		assert.equal(ToolExecutionComponent.prototype.render, otherWrapper);
-		assert.equal(renderTool("again").match(/⚙ bash/g)?.length ?? 0, 0);
+		assert.doesNotMatch(renderTool("again"), /⚙ bash  again/);
 		assert.match(renderTool("again"), /▸.*⚙1/);
 	} finally { next.stop(); ToolExecutionComponent.prototype.render = native; }
 });

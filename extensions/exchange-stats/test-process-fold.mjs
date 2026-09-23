@@ -54,3 +54,17 @@ test("a live process switches to a running tool and retains wall time after clos
 	assert.equal(model.toggleProcess(process.id), true);
 	assert.equal(model.isProcessOpen(process.id), true);
 });
+
+test("a tool-led process shows its queued tool without a time before execution starts", () => {
+	let now = 5000;
+	const model = new ToolFoldModel(() => now);
+	model.beginExchange(1);
+	model.ingest({ role: "assistant", timestamp: 301, content: [{ type: "toolCall", id: "call-q", name: "bash", arguments: { command: "pwd" } }] });
+	const process = model.processes()[0];
+	assert.equal(model.processLine(process.id), "▸ ◈0 ⚙1 · ⚙ bash queued");
+	model.start("call-q", "bash");
+	now = 6500;
+	assert.match(model.processLine(process.id), /⚙ bash running 1\.5s/);
+	model.end("call-q", false, undefined, now);
+	assert.equal(model.processLine(process.id), "▸ ◈0 ⚙1 · 1.5s");
+});

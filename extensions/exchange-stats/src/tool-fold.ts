@@ -359,12 +359,16 @@ export class ToolFoldModel {
 		let first: number | undefined;
 		let last: number | undefined;
 		let activity = "";
+		let queued = "";
 		for (const block of process.blocks) {
 			const tool = block.kind === "tool" ? this.blocks.get(block.key.slice(5)) : undefined;
 			const saved = this.pendingThinking.get(block.key) ?? this.saved?.(block.key);
 			const timing = saved?.startedAt !== undefined ? { start: saved.startedAt, end: saved.endedAt }
 				: block.kind === "thinking" ? this.thinking.timing(block.message, block.index)
 				: tool?.startedAt === undefined ? undefined : { start: tool.startedAt, end: tool.endedAt };
+			// Pi streams a tool call before executing it; name it without inventing a time.
+			// A saved record means the call settled (possibly never run), so it is not queued.
+			if (!timing && block.kind === "tool" && tool?.endedAt === undefined && !saved) queued ||= `⚙ ${tool?.name ?? "tool"} queued`;
 			if (!timing) continue;
 			first = first === undefined ? timing.start : Math.min(first, timing.start);
 			last = Math.max(last ?? timing.start, timing.end ?? this.now());
@@ -374,7 +378,7 @@ export class ToolFoldModel {
 		}
 		const count = `◈${process.blocks.filter((block) => block.kind === "thinking").length} ⚙${process.blocks.filter((block) => block.kind === "tool").length}`;
 		const total = first === undefined || last === undefined ? "0ms" : elapsed(Math.max(0, last - first));
-		return `${process.open ? "▾" : "▸"} ${count} · ${activity || total}`;
+		return `${process.open ? "▾" : "▸"} ${count} · ${activity || queued || total}`;
 	}
 
 	observe(id: string, name: string, args: Record<string, unknown>, result?: ToolBlock["result"]): void {
