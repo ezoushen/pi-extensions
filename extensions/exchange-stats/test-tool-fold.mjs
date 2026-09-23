@@ -92,6 +92,41 @@ test("tool titles fit 20, 40 and 80 columns with CJK arguments", () => {
 	} finally { restore(); }
 });
 
+test("read title keeps the filename and stats after shortening an injected home path", () => {
+	const home = "/fixture/home";
+	const path = `${home}/Workspace/a/very/long/path/to/SETUP.md`;
+	const model = new ToolFoldModel(() => 100);
+	const tool = new ToolExecutionComponent("read", "path-call", { path }, {}, undefined, ui, ".");
+	const patch = installToolFold(ToolExecutionComponent, model, () => undefined, () => 1, () => home);
+	try {
+		model.start("path-call", "read", 0);
+		tool.updateResult(result("one\ntwo"));
+		model.end("path-call", false, tool.result, 100);
+		const line = tool.render(60)[0];
+		assert.match(line, /~\/…\/.*SETUP\.md.*✓ 100ms · 2 lines/);
+		assert.ok(visibleWidth(line) <= 60);
+	} finally { patch.restore(); }
+});
+
+test("truncated bash title retains the command head and dims every visible title character", () => {
+	const model = new ToolFoldModel(() => 100);
+	const tool = new ToolExecutionComponent("bash", "long-command", { command: "printf beginning-of-command and-a-very-long-remainder-that-will-not-fit" }, {}, undefined, ui, ".");
+	const patch = installToolFold(ToolExecutionComponent, model, () => ({ fg(_color, value) { return `\x1b[2m${value}\x1b[0m`; } }));
+	try {
+		model.start("long-command", "bash", 0);
+		tool.updateResult(result("one\ntwo"));
+		model.end("long-command", false, tool.result, 100);
+		const line = tool.render(45)[0];
+		assert.match(line, /printf beginn.*….*✓ 100ms · 2 lines/);
+		let dim = false;
+		for (const part of line.matchAll(/\x1b\[[0-9;]*m|[^\x1b]+/g)) {
+			if (part[0] === "\x1b[2m") dim = true;
+			else if (part[0] === "\x1b[0m") dim = false;
+			else if (part[0].trim()) assert.equal(dim, true, part[0]);
+		}
+	} finally { patch.restore(); }
+});
+
 test("tool title uses the active dim theme on each render; native open output keeps Pi styling", () => {
 	initTheme("dark");
 	const model = new ToolFoldModel(() => 1000);
