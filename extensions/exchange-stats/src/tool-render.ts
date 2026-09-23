@@ -1,4 +1,5 @@
 import { MouseRegion, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { homedir } from "node:os";
 import type { ToolFoldModel } from "./tool-fold.ts";
 import { fitThinkingLine } from "./thinking-width.ts";
 
@@ -24,8 +25,30 @@ function truncateProcessLine(text: string, width: number): string {
 	return fitThinkingLine(text, width);
 }
 
+function pathTail(path: string, width: number): string {
+	if (visibleWidth(path) <= width) return path;
+	const slash = path.lastIndexOf("/");
+	if (slash < 0) return "…" + Array.from(path).reverse().reduce((tail, character) => visibleWidth("…" + character + tail) <= width ? character + tail : tail, "");
+	const prefix = path.startsWith("~/") ? "~/…/" : "…/";
+	const tail = path.slice(slash + 1);
+	let result = prefix + tail;
+	if (visibleWidth(result) > width) {
+		result = "…";
+		for (const character of Array.from(tail).reverse()) {
+			if (visibleWidth(result) + visibleWidth(character) > width) break;
+			result = "…" + character + result.slice(1);
+		}
+		return result;
+	}
+	for (const segment of path.slice(path.startsWith("~/") ? 2 : 0, slash).split("/").reverse()) {
+		if (!segment || visibleWidth(prefix + segment + "/" + result.slice(prefix.length)) > width) break;
+		result = prefix + segment + "/" + result.slice(prefix.length);
+	}
+	return result;
+}
+
 /** Installs a reversible display wrapper; unsupported Pi components stay native. */
-export function installToolFold(componentClass: ToolClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined): { installed: boolean; restore: () => void } {
+export function installToolFold(componentClass: ToolClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined, getOutputPad: () => number = () => 1, getHomeDirectory: () => string = homedir): { installed: boolean; restore: () => void } {
 	const prototype = componentClass?.prototype;
 	const original = prototype?.render;
 	const originalMouse = prototype?.handleMouse;
@@ -37,23 +60,28 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 			model.observe(this.toolCallId, this.toolName, this.args, this.result);
 			const process = model.processForTool(this.toolCallId);
 			if (process && !model.isProcessOpen(process.id) && !model.isProcessLead(process.id, `tool:${this.toolCallId}`)) return [];
+			const padding = Math.min(getOutputPad(), Math.max(0, Math.floor((width - 1) / 2)));
+			const contentWidth = width - padding * 2;
 			const processText = process && model.isProcessLead(process.id, `tool:${this.toolCallId}`)
-				? truncateProcessLine(model.processLine(process.id), width) : undefined;
-			const processLine = processText === undefined ? [] : [getTheme()?.fg(model.isCursorHighlighted(`process:${process!.id}`) ? "accent" : "dim", processText) ?? processText];
+				? truncateProcessLine(model.processLine(process.id), contentWidth) : undefined;
+			const processLine = processText === undefined ? [] : new Text(getTheme()?.fg(model.isCursorHighlighted(`process:${process!.id}`) ? "accent" : "dim", processText) ?? processText, padding, 0).render(width);
 			if (process && !model.isProcessOpen(process.id)) return processLine;
 			if (model.isOpen(this.toolCallId) && !model.isCursorHighlighted(`tool:${this.toolCallId}`)) return [...processLine, ...original.call(this, width)];
 			const parts = model.titleParts(this.toolCallId);
 			if (!parts || width <= 0) return original.call(this, width);
-			const name = truncateToWidth(`⚙ ${parts.name}`, width, "");
-			const remaining = width - visibleWidth(name);
+			const name = truncateToWidth(`⚙ ${parts.name}`, contentWidth, "");
+			const remaining = contentWidth - visibleWidth(name);
 			const stats = truncateToWidth(`  ${parts.stats}`, remaining, "");
 			const argumentWidth = Math.max(0, remaining - visibleWidth(`  ${parts.stats}`));
+			const home = getHomeDirectory();
+			const path = typeof this.args?.path === "string" && (parts.argument === this.args.path || parts.argument === this.args.path.replace(/\s+/g, " ").trim())
+				? parts.argument.startsWith(`${home}/`) ? `~${parts.argument.slice(home.length)}` : parts.argument : undefined;
 			const argument = argumentWidth > 2 && parts.argument
-				? truncateToWidth(`  ${parts.argument}`, argumentWidth, "…")
+				? (path === undefined ? truncateToWidth(`  ${parts.argument}`, argumentWidth, "…") : `  ${pathTail(path, argumentWidth - 2)}`).replace(/\x1b\[0m/g, "")
 				: "";
 			const title = name + argument + stats;
 			const styled = getTheme()?.fg(model.isCursorHighlighted(`tool:${this.toolCallId}`) ? "accent" : "dim", title) ?? title;
-			return [...processLine, styled, ...(model.isOpen(this.toolCallId) ? original.call(this, width) : [])];
+			return [...processLine, ...new Text(styled, padding, 0).render(width), ...(model.isOpen(this.toolCallId) ? original.call(this, width) : [])];
 		} catch {
 			return original.call(this, width);
 		}
@@ -106,12 +134,13 @@ interface AssistantClass {
 }
 
 /** Replaces only Pi's thinking children and keeps its text rendering in place. */
-export function installThinkingFold(componentClass: AssistantClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined, requestRender: () => void = () => {}): { installed: boolean; restore: () => void } {
+export function installThinkingFold(componentClass: AssistantClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined, requestRender: () => void = () => {}, observeOutputPad: (padding: number) => void = () => {}): { installed: boolean; restore: () => void } {
 	const prototype = componentClass?.prototype;
 	const original = prototype?.updateContent;
 	if (typeof original !== "function") return { installed: false, restore() {} };
 
 	function foldContent(this: AssistantComponent, message: Message, isStreaming?: boolean): void {
+		observeOutputPad(this.outputPad);
 		if (!Array.isArray(message?.content) || !this.contentContainer?.children) {
 			original.call(this, message, isStreaming);
 			return;

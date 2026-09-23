@@ -213,10 +213,11 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	const toolFold = new ToolFoldModel();
 	let themeContext: { ui: { theme?: { fg(color: "dim" | "accent", text: string): string }; setStatus(key: string, value: string): void } } | undefined;
 	const getTitleTheme = () => themeContext?.ui.theme;
+	let outputPad = 1;
 	let lastStatus = "";
 	const requestRender = () => { if (themeContext) themeContext.ui.setStatus(STATUS_KEY, toolFold.cursorTitle() ? `${lastStatus} · Cursor ${toolFold.cursorTitle()}` : lastStatus); };
-	const toolPatch = installToolFold(toolComponent, toolFold, getTitleTheme);
-	const thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold, getTitleTheme, requestRender);
+	const toolPatch = installToolFold(toolComponent, toolFold, getTitleTheme, () => outputPad);
+	const thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold, getTitleTheme, requestRender, (padding) => { outputPad = padding; });
 	const resolvedKeys = resolveSettings("exchange-stats", FOLD_KEYS, {
 		cwd: process.cwd(), hasUI: true, isProjectTrusted: () => false,
 	}, settingsRuntime);

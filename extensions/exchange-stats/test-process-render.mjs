@@ -66,6 +66,32 @@ test("real Pi components show one line per process, preserve text, and reopen L2
 	} finally { thinkingPatch.restore(); toolPatch.restore(); }
 });
 
+test("tool and thinking titles use the same Pi content margin", () => {
+	const model = new ToolFoldModel(() => 100);
+	const message = snapshot(701, [
+		{ type: "thinking", thinking: "Checking the file." },
+		{ type: "toolCall", id: "margin-read", name: "read", arguments: { path: "SETUP.md" } },
+	]);
+	model.ingest(message);
+	model.toggleProcess(model.processes()[0].id);
+	let outputPad = 1;
+	const thinkingPatch = installThinkingFold(AssistantMessageComponent, model, () => undefined, () => {}, (pad) => { outputPad = pad; });
+	const toolPatch = installToolFold(ToolExecutionComponent, model, () => undefined, () => outputPad);
+	try {
+		const assistant = new AssistantMessageComponent(undefined, false, undefined, "Thinking...", 2);
+		assistant.updateContent(snapshot(701, message.content.map((item) => ({ ...item }))), false);
+		const tool = new ToolExecutionComponent("read", "margin-read", { path: "SETUP.md" }, {}, undefined, ui, ".");
+		const thinkingLine = assistant.render(80).find((line) => line.includes("◈ Checking"));
+		const toolLine = tool.render(80).find((line) => line.includes("⚙ read"));
+		assert.ok(thinkingLine && toolLine);
+		assert.equal(thinkingLine.indexOf("◈"), toolLine.indexOf("⚙"));
+		assert.equal(toolLine.indexOf("⚙"), 2);
+		model.ingest(snapshot(702, [{ type: "text", text: "Next" }, { type: "toolCall", id: "lead-tool", name: "bash", arguments: { command: "pwd" } }]));
+		const lead = new ToolExecutionComponent("bash", "lead-tool", { command: "pwd" }, {}, undefined, ui, ".");
+		assert.equal(lead.render(80)[0].indexOf("▸"), 2);
+	} finally { thinkingPatch.restore(); toolPatch.restore(); }
+});
+
 test("fresh streaming snapshots move the process line from thinking to the running tool", () => {
 	let now = 1000;
 	const model = new ToolFoldModel(() => now);
