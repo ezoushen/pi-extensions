@@ -11,22 +11,46 @@ interface ThinkingBlock {
 	tokens?: number;
 }
 
+interface ThinkingMessage {
+	timestamp?: number;
+}
+
+const MAX_THINKING_MESSAGES = 256;
+
 function elapsed(ms: number): string {
 	return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
 /** Holds display timing for each thinking content item in an assistant message. */
 class ThinkingFoldModel {
-	private blocks = new WeakMap<object, Map<number, ThinkingBlock>>();
+	private blocks = new Map<number, Map<number, ThinkingBlock>>();
+	private untimedBlocks = new WeakMap<object, Map<number, ThinkingBlock>>();
 	private now: () => number;
 
 	constructor(now: () => number = Date.now) {
 		this.now = now;
 	}
 
-	observe(message: object, event: ThinkingEvent, reasoningTokens?: number): void {
-		const blocks = this.blocks.get(message) ?? new Map<number, ThinkingBlock>();
-		this.blocks.set(message, blocks);
+	private forMessage(message: ThinkingMessage, create: boolean): Map<number, ThinkingBlock> | undefined {
+		if (typeof message.timestamp !== "number" || !Number.isFinite(message.timestamp)) {
+			const existing = this.untimedBlocks.get(message);
+			if (existing || !create) return existing;
+			const blocks = new Map<number, ThinkingBlock>();
+			this.untimedBlocks.set(message, blocks);
+			return blocks;
+		}
+		const existing = this.blocks.get(message.timestamp);
+		if (existing || !create) return existing;
+		// Retain recent completed messages for Pi's history rebuilds without growing per delta.
+		if (this.blocks.size >= MAX_THINKING_MESSAGES) this.blocks.delete(this.blocks.keys().next().value!);
+		const blocks = new Map<number, ThinkingBlock>();
+		this.blocks.set(message.timestamp, blocks);
+		return blocks;
+	}
+
+	observe(message: ThinkingMessage, event: ThinkingEvent, reasoningTokens?: number): void {
+		const blocks = this.forMessage(message, event.type === "thinking_delta");
+		if (!blocks) return;
 		const at = this.now();
 		if (event.type === "thinking_delta" && event.contentIndex !== undefined) {
 			const block = blocks.get(event.contentIndex) ?? { startedAt: at, characters: 0 };
@@ -43,14 +67,14 @@ class ThinkingFoldModel {
 		}
 	}
 
-	settle(message: object): void {
-		for (const block of this.blocks.get(message)?.values() ?? []) {
+	settle(message: ThinkingMessage): void {
+		for (const block of this.forMessage(message, false)?.values() ?? []) {
 			if (block.endedAt === undefined) block.endedAt = this.now();
 		}
 	}
 
-	title(message: object, index: number, trace: string, streaming: boolean): string {
-		const block = this.blocks.get(message)?.get(index);
+	title(message: ThinkingMessage, index: number, trace: string, streaming: boolean): string {
+		const block = this.forMessage(message, false)?.get(index);
 		const ms = block ? Math.max(0, (block.endedAt ?? this.now()) - block.startedAt) : 0;
 		if (!streaming || block?.endedAt !== undefined) {
 			const words = trace.trim().split(/\s+/).filter(Boolean).length;
@@ -130,15 +154,15 @@ export class ToolFoldModel {
 		this.blocks.set(id, block);
 	}
 
-	observeThinking(message: object, event: ThinkingEvent, reasoningTokens?: number): void {
+	observeThinking(message: ThinkingMessage, event: ThinkingEvent, reasoningTokens?: number): void {
 		this.thinking.observe(message, event, reasoningTokens);
 	}
 
-	settleThinking(message: object): void {
+	settleThinking(message: ThinkingMessage): void {
 		this.thinking.settle(message);
 	}
 
-	thinkingTitle(message: object, index: number, trace: string, streaming: boolean): string {
+	thinkingTitle(message: ThinkingMessage, index: number, trace: string, streaming: boolean): string {
 		return this.thinking.title(message, index, trace, streaming);
 	}
 

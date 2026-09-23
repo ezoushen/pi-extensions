@@ -34,6 +34,38 @@ test("live title grows with Pi's real assistant component", () => {
 	} finally { restore(); }
 });
 
+test("fresh Pi message objects keep one thinking clock through late thinking_end and history render", () => {
+	let now = 1000;
+	const model = new ToolFoldModel(() => now);
+	const patch = installThinkingFold(AssistantMessageComponent, model);
+	const component = new AssistantMessageComponent();
+	const snapshot = (thinking, text = "") => ({
+		role: "assistant", timestamp: 42, stopReason: "stop",
+		content: [{ type: "thinking", thinking }, ...(text ? [{ type: "text", text }] : [])],
+	});
+	try {
+		const first = snapshot("first thought");
+		model.observeThinking(first, { type: "thinking_delta", contentIndex: 0, delta: "first thought" });
+		component.updateContent(snapshot("first thought"), true);
+		now = 2200;
+		const second = snapshot("first thought second thought");
+		model.observeThinking(second, { type: "thinking_delta", contentIndex: 0, delta: " second thought" });
+		component.updateContent(snapshot("first thought second thought"), true);
+		assert.match(component.render(80).join("\n"), /Thinking.*1\.2s.*~\d+ tok/);
+		now = 3300;
+		model.observeThinking(snapshot("first thought second thought", "answer"), { type: "text_start", contentIndex: 1 });
+		component.updateContent(snapshot("first thought second thought", "answer"), true);
+		now = 3800;
+		model.observeThinking(snapshot("first thought second thought", "answer"), { type: "thinking_end", contentIndex: 0 });
+		model.settleThinking(snapshot("first thought second thought", "answer"));
+		component.updateContent(snapshot("first thought second thought", "answer"), false);
+		assert.match(component.render(80).join("\n"), /Thinking.*2\.3s.*4 words/);
+		const history = new AssistantMessageComponent();
+		history.updateContent(snapshot("first thought second thought", "answer"), false);
+		assert.match(history.render(80).join("\n"), /Thinking.*2\.3s.*4 words/);
+	} finally { patch.restore(); }
+});
+
 test("the live title keeps counting on render and stays on one line at narrow widths", () => {
 	let now = 0;
 	const model = new ToolFoldModel(() => now);
@@ -63,6 +95,33 @@ test("two thinking runs fold while text children render exactly as Pi renders th
 		assert.deepEqual(foldedText.map((child) => child.render(80)), nativeText.map((child) => child.render(80)));
 		assert.equal(folded.render(80).join("\n").match(/◈ Thinking/g)?.length, 2);
 	} finally { restore(); }
+});
+
+test("thinking title uses active dim ANSI while text and opened trace keep native styling", () => {
+	const message = { role: "assistant", timestamp: 91, content: [
+		{ type: "thinking", thinking: "native trace" }, { type: "text", text: "answer" },
+	], stopReason: "stop" };
+	const model = new ToolFoldModel();
+	const native = new AssistantMessageComponent();
+	native.updateContent(message, false);
+	let ansi = "\x1b[38;2;80;80;80m";
+	const patch = installThinkingFold(AssistantMessageComponent, model, () => ({
+		fg(name, value) { assert.equal(name, "dim"); return `${ansi}${value}\x1b[0m`; },
+	}));
+	const folded = new AssistantMessageComponent();
+	try {
+		folded.updateContent(message, false);
+		assert.match(folded.render(80).join("\n"), /\x1b\[38;2;80;80;80m.*Thinking.*\x1b\[0m/);
+		ansi = "\x1b[38;2;120;120;120m";
+		assert.match(folded.render(80).join("\n"), /\x1b\[38;2;120;120;120m.*Thinking.*\x1b\[0m/);
+		const nativeText = native.contentContainer.children.find((child) => child.constructor.name === "Markdown");
+		const foldedText = folded.contentContainer.children.find((child) => child.constructor.name === "Markdown");
+		assert.deepEqual(foldedText.render(80), nativeText.render(80));
+		const region = folded.contentContainer.children.find((child) => child.constructor.name === "MouseRegion");
+		region.onMouse({ type: "click", button: "left" });
+		assert.deepEqual(folded.contentContainer.children.find((child) => child.constructor.name === "MouseRegion").render(80),
+			native.contentContainer.children.find((child) => child.constructor.name === "MouseRegion").render(80));
+	} finally { patch.restore(); }
 });
 
 test("hideThinkingBlock does not change titles or opened native traces", () => {

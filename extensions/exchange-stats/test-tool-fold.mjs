@@ -65,6 +65,17 @@ test("model toggle returns the component's original full rendering and folds aga
 	} finally { restore(); }
 });
 
+test("tool timing survives a new Pi component for the same toolCallId", () => {
+	let now = 1000;
+	const { model, restore } = mount(() => now);
+	try {
+		model.start("call-1", "bash", now);
+		now = 2500;
+		const replacement = new ToolExecutionComponent("bash", "call-1", { command: "pwd" }, {}, undefined, ui, ".");
+		assert.match(replacement.render(80)[0], /running 1\.5s/);
+	} finally { restore(); }
+});
+
 test("tool titles fit 20, 40 and 80 columns with CJK arguments", () => {
 	const { model, component, restore } = mount(() => 4000, { command: "讀取設定檔並顯示全部內容" });
 	try {
@@ -79,4 +90,22 @@ test("tool titles fit 20, 40 and 80 columns with CJK arguments", () => {
 			if (width === 40) assert.match(lines[0], /讀.*…/);
 		}
 	} finally { restore(); }
+});
+
+test("tool title uses the active dim theme on each render; native open output keeps Pi styling", () => {
+	initTheme("dark");
+	const model = new ToolFoldModel(() => 1000);
+	const tool = new ToolExecutionComponent("bash", "themed-call", { command: "pwd" }, {}, undefined, ui, ".");
+	const original = ToolExecutionComponent.prototype.render;
+	let ansi = "\x1b[38;2;80;80;80m";
+	const theme = () => ({ fg(name, value) { assert.equal(name, "dim"); return `${ansi}${value}\x1b[0m`; } });
+	const patch = installToolFold(ToolExecutionComponent, model, theme);
+	try {
+		model.start("themed-call", "bash", 0);
+		assert.match(tool.render(80)[0], /\x1b\[38;2;80;80;80m.*bash.*\x1b\[0m/);
+		ansi = "\x1b[38;2;120;120;120m";
+		assert.match(tool.render(80)[0], /\x1b\[38;2;120;120;120m.*bash.*\x1b\[0m/);
+		model.toggle("themed-call");
+		assert.deepEqual(tool.render(80), original.call(tool, 80));
+	} finally { patch.restore(); }
 });

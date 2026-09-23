@@ -218,8 +218,10 @@ function unionMs(runs: ToolRun[]): number {
 
 export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof ToolExecutionComponent = ToolExecutionComponent) {
 	const toolFold = new ToolFoldModel();
-	const toolPatch = installToolFold(toolComponent, toolFold);
-	const thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold);
+	let themeContext: { ui: { theme?: { fg(color: "dim", text: string): string } } } | undefined;
+	const getTitleTheme = () => themeContext?.ui.theme;
+	const toolPatch = installToolFold(toolComponent, toolFold, getTitleTheme);
+	const thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold, getTitleTheme);
 	let warnedAboutToolFold = false;
 	let warnedAboutThinkingFold = false;
 	const sessionTotals = {
@@ -369,6 +371,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	// ---- Lifecycle ----
 
 	pi.on("session_start", (_event, ctx) => {
+		themeContext = ctx;
 		if (!toolPatch.installed && !warnedAboutToolFold) {
 			announce(ctx, "exchange-stats: tool folding unavailable; Pi tool rows remain native", "warning");
 			warnedAboutToolFold = true;
@@ -383,6 +386,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	});
 
 	pi.on("session_shutdown", () => {
+		themeContext = undefined;
 		toolPatch.restore();
 		thinkingPatch.restore();
 		resetExchangeState();
