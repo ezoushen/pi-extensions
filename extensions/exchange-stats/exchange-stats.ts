@@ -47,7 +47,7 @@ import { announce } from "../../shared/announce.ts";
 import { resolveSettings, type SettingsRuntime } from "../../shared/settings.ts";
 import { FoldPicker } from "./src/fold-picker.ts";
 import { TranscriptCursor } from "./src/transcript-cursor.ts";
-import { HeadlineScheduler } from "./src/headline-scheduler.ts";
+import { HeadlineLengthError, HeadlineScheduler } from "./src/headline-scheduler.ts";
 import { ToolFoldModel, type FoldBlockRecord } from "./src/tool-fold.ts";
 import { installThinkingFold, installToolFold } from "./src/tool-render.ts";
 import { Box, Text } from "@earendil-works/pi-tui";
@@ -440,6 +440,9 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 							systemPrompt: "Summarize this live thinking trace as a headline of at most 10 words. Return only the headline.",
 							messages: [{ role: "user", content: [{ type: "text", text: trace }], timestamp: Date.now() }],
 						}, { reasoning: "off", maxTokens: 32, signal }).result();
+						if (response.stopReason === "length" && !response.content.some((part) => part.type === "text" && part.text.trim())) {
+							throw new HeadlineLengthError("model did not answer within its output cap");
+						}
 						if (response.stopReason !== "stop") throw new Error(response.errorMessage ?? "headline request failed");
 						return response.content.filter((part) => part.type === "text").map((part) => part.text).join(" ");
 					},
@@ -448,7 +451,12 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 						toolFold.setThinkingHeadline({ timestamp }, index, headline);
 						requestRender();
 					},
-					onFailure: (reason) => announce(ctx, `exchange-stats: headline summary ${reason === "timeout" ? "timed out" : "failed"}; using trace sentence`, "warning", `exchange-stats:headline-failure:${session}`),
+					onFailure: (reason, message) => {
+						const detail = reason === "length"
+							? "model did not answer within its output cap; set thinkingLevelMap.off to \"none\" for this model"
+							: reason === "timeout" ? "request timed out" : (message ?? "headline request failed").replace(/\s+/g, " ").trim().slice(0, 120);
+						announce(ctx, `exchange-stats: headline summary ${configuredModel}: ${detail}; using trace sentence`, "warning", `exchange-stats:headline-failure:${session}`);
+					},
 				});
 			}
 		}
