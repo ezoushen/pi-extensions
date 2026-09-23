@@ -29,12 +29,19 @@ fullscreen mode, left click a process line or block title to toggle it.
 An **exchange** is one uninterrupted work span from a submitted prompt until Pi has
 nothing left to do automatically. A **turn** is one model response plus the tools it
 invokes, so an exchange can contain several turns. The status line shows the current
-or most recent exchange, and a transcript card records the settled breakdown.
+or most recent exchange. The transcript card shows the exchange headline, summary,
+and token and cost totals in both collapsed and expanded views. Block titles carry
+the individual timing and count details.
 
 Tool time is the union of tool spans, not their sum, so parallel calls are not counted
 twice. Model time is estimated as turn wall time minus tool time. Output throughput is
 calculated per turn, while cumulative cost and token fields use Pi's reported usage.
-Run `/exstats` to append a cumulative session card.
+Run `/exstats` to append a cumulative session card. Exchange entries retain block
+durations, status, counts, and headlines outside model context. On resume, reload,
+or a branch switch, the extension rebuilds fold state from the active session
+branch without sending historical thinking to the headline model. Older entries
+without block statistics still show their card; their thinking titles use `—` for
+unknown duration.
 
 ## External contract
 
@@ -61,8 +68,9 @@ Pi's native renderer; exchange stats continue.
 If Pi no longer provides the assistant content interface, a single warning is
 shown and thinking uses Pi's native rendering.
 
-The measurements are process-local. They do not claim provider-side queue time,
-exclusive model compute time, or billing beyond the usage object Pi received.
+The timings are measured locally, then saved in exchange entries. They do not
+claim provider-side queue time, exclusive model compute time, or billing beyond
+the usage object Pi received.
 
 ## Settings
 
@@ -98,7 +106,8 @@ Submit a prompt that makes at least one tool call and produces thinking, then wa
 for Pi to settle. Check that one process line covers each stretch between pieces of
 assistant text, that its counts and live activity change as blocks arrive, and that
 its total time stops when the process completes. Expand the
-exchange card and verify that its turn count, output tokens, tool names, and wall-time
-breakdown match the transcript. Run `/exstats` and confirm that the session card equals
-the sum of completed exchanges. To check parallel-tool accounting, run two overlapping
-tools and confirm their union is not larger than the exchange wall time.
+exchange card and verify that its summary and token and cost totals match the
+transcript. Open a process to see individual block timings and counts. Run
+`/exstats` and confirm that the session card equals the sum of completed
+exchanges. To check parallel-tool accounting, run two overlapping tools and
+confirm their union is not larger than the exchange wall time.

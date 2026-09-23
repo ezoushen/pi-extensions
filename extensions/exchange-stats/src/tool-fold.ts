@@ -12,6 +12,10 @@ interface ThinkingBlock {
 	headline?: string;
 }
 
+export type FoldBlockRecord =
+	| { kind: "thinking"; id: string; durationMs?: number; startedAt?: number; endedAt?: number; status: "done"; wordCount: number; headline: string; headlineSource: "model" | "trace" }
+	| { kind: "tool"; id: string; durationMs?: number; startedAt?: number; endedAt?: number; status: "ok" | "error" | "unknown"; lineCount: number };
+
 interface ThinkingMessage {
 	timestamp?: number;
 }
@@ -107,18 +111,27 @@ class ThinkingFoldModel {
 		if (block) block.headline = headline;
 	}
 
-	title(message: ThinkingMessage, index: number, trace: string, streaming: boolean): string {
+	record(message: ThinkingMessage, index: number, trace: string): FoldBlockRecord {
 		const block = this.forMessage(message, false)?.get(index);
-		const ms = block ? Math.max(0, (block.endedAt ?? this.now()) - block.startedAt) : 0;
-		const label = block?.headline ?? headline(trace, streaming && block?.endedAt === undefined);
+		return { kind: "thinking", id: `thinking:${message.timestamp}:${index}`,
+			durationMs: block?.endedAt === undefined ? undefined : Math.max(0, block.endedAt - block.startedAt),
+			startedAt: block?.startedAt, endedAt: block?.endedAt, status: "done",
+			wordCount: trace.trim().split(/\s+/).filter(Boolean).length,
+			headline: block?.headline ?? headline(trace, false), headlineSource: block?.headline ? "model" : "trace" };
+	}
+
+	title(message: ThinkingMessage, index: number, trace: string, streaming: boolean, saved?: FoldBlockRecord): string {
+		const block = this.forMessage(message, false)?.get(index);
+		const ms = saved?.durationMs ?? (block ? Math.max(0, (block.endedAt ?? this.now()) - block.startedAt) : undefined);
+		const label = saved?.kind === "thinking" ? saved.headline : block?.headline ?? headline(trace, streaming && block?.endedAt === undefined);
 		if (!streaming || block?.endedAt !== undefined) {
-			const words = trace.trim().split(/\s+/).filter(Boolean).length;
-			return `◈ ${label} · ${elapsed(ms)} · ${words} ${words === 1 ? "word" : "words"}`;
+			const words = saved?.kind === "thinking" ? saved.wordCount : trace.trim().split(/\s+/).filter(Boolean).length;
+			return `◈ ${label} · ${ms === undefined ? "—" : elapsed(ms)} · ${words} ${words === 1 ? "word" : "words"}`;
 		}
 		const count = block?.tokens ?? Math.max(1, Math.ceil((block?.characters ?? trace.length) / 4));
 		const prefix = block?.tokens === undefined ? "~" : "";
-		const rate = ms > 0 ? Math.round(count / (ms / 1000)) : 0;
-		return `◈ ${label} · ${elapsed(ms)} · ${prefix}${count} tok · ${prefix}${rate} tok/s`;
+		const rate = ms !== undefined && ms > 0 ? Math.round(count / (ms / 1000)) : 0;
+		return `◈ ${label} · ${ms === undefined ? "—" : elapsed(ms)} · ${prefix}${count} tok · ${prefix}${rate} tok/s`;
 	}
 
 	timing(message: ThinkingMessage, index: number): { start: number; end?: number } | undefined {
@@ -169,11 +182,39 @@ export class ToolFoldModel {
 	private currentExchange = 0;
 	private now: () => number;
 	private thinking: ThinkingFoldModel;
+	private saved?: (id: string) => FoldBlockRecord | undefined;
+	private pendingThinking = new Map<string, FoldBlockRecord>();
 
 	constructor(now: () => number = Date.now) {
 		this.now = now;
 		this.thinking = new ThinkingFoldModel(now);
 	}
+
+	/** Rebuilds process membership from the active branch while keeping restored stats in session entries. */
+	clear(saved?: (id: string) => FoldBlockRecord | undefined): void {
+		this.blocks.clear();
+		this.processList = [];
+		this.processByBlock.clear();
+		this.seenContent.clear();
+		this.openProcess = undefined;
+		this.openThinking.clear();
+		this.currentExchange = 0;
+		this.thinking = new ThinkingFoldModel(this.now);
+		this.pendingThinking.clear();
+		this.saved = saved;
+	}
+
+	/** Saves only display statistics; traces, tool arguments, and results stay in Pi messages. */
+	recordsForExchange(exchange: number): FoldBlockRecord[] {
+		return this.processList.filter((process) => process.exchange === exchange).flatMap((process) => process.blocks.map((block): FoldBlockRecord => {
+			if (block.kind === "thinking") return this.pendingThinking.get(block.key) ?? this.thinking.record(block.message, block.index, block.trace);
+			const tool = this.blocks.get(block.key.slice(5));
+			return { kind: "tool", id: block.key, durationMs: tool?.startedAt === undefined || tool.endedAt === undefined ? undefined : Math.max(0, tool.endedAt - tool.startedAt),
+				startedAt: tool?.startedAt, endedAt: tool?.endedAt, status: !tool?.endedAt ? "unknown" : tool.isError ? "error" : "ok", lineCount: lineCount(tool?.result) };
+		}));
+	}
+
+	releaseExchangeRecords(): void { this.pendingThinking.clear(); }
 
 	/** Adds newly visible content in message order; repeated snapshots keep existing membership. */
 	ingest(message: ProcessMessage): void {
@@ -222,7 +263,7 @@ export class ToolFoldModel {
 	}
 
 	processes(): ReadonlyArray<Process> { return this.processList; }
-	beginExchange(): void { this.currentExchange++; this.openProcess = undefined; }
+	beginExchange(index = this.currentExchange + 1): void { this.currentExchange = index; this.openProcess = undefined; }
 	endExchange(): void { this.openProcess = undefined; }
 	toggleLatestProcess(): boolean | undefined {
 		const process = this.processList.at(-1);
@@ -267,8 +308,9 @@ export class ToolFoldModel {
 		let activity = "";
 		for (const block of process.blocks) {
 			const tool = block.kind === "tool" ? this.blocks.get(block.key.slice(5)) : undefined;
-			const timing = block.kind === "thinking"
-				? this.thinking.timing(block.message, block.index)
+			const saved = this.pendingThinking.get(block.key) ?? this.saved?.(block.key);
+			const timing = saved?.startedAt !== undefined ? { start: saved.startedAt, end: saved.endedAt }
+				: block.kind === "thinking" ? this.thinking.timing(block.message, block.index)
 				: tool?.startedAt === undefined ? undefined : { start: tool.startedAt, end: tool.endedAt };
 			if (!timing) continue;
 			first = first === undefined ? timing.start : Math.min(first, timing.start);
@@ -311,16 +353,28 @@ export class ToolFoldModel {
 		this.thinking.observe(message, event, reasoningTokens);
 	}
 
-	settleThinking(message: ThinkingMessage): void {
+	settleThinking(message: ThinkingMessage & { content?: ProcessMessage["content"] }): void {
 		this.thinking.settle(message);
+		for (let index = 0; index < (message.content?.length ?? 0); index++) {
+			if (message.content?.[index].type !== "thinking" || message.content?.[index - 1]?.type === "thinking") continue;
+			const key = `thinking:${message.timestamp}:${index}`;
+			const block = this.processByBlock.get(key)?.blocks.find((item) => item.key === key);
+			if (block?.kind === "thinking") this.pendingThinking.set(key, this.thinking.record(message, index, block.trace));
+		}
 	}
 
 	thinkingTitle(message: ThinkingMessage, index: number, trace: string, streaming: boolean): string {
-		return this.thinking.title(message, index, trace, streaming);
+		const key = `thinking:${message.timestamp}:${index}`;
+		return this.thinking.title(message, index, trace, streaming, this.pendingThinking.get(key) ?? this.saved?.(key));
 	}
 
 	setThinkingHeadline(message: ThinkingMessage, index: number, headline: string | undefined): void {
 		this.thinking.setHeadline(message, index, headline);
+		const pending = this.pendingThinking.get(`thinking:${message.timestamp}:${index}`);
+		if (pending?.kind === "thinking" && headline) {
+			pending.headline = headline;
+			pending.headlineSource = "model";
+		}
 	}
 
 	toggle(id: string): boolean | undefined {
@@ -337,11 +391,12 @@ export class ToolFoldModel {
 	titleParts(id: string): { name: string; argument: string; stats: string } | undefined {
 		const block = this.blocks.get(id);
 		if (!block) return undefined;
+		const saved = this.saved?.(`tool:${id}`);
 		const argument = summary(block.args);
-		const elapsed = block.startedAt === undefined ? undefined : Math.max(0, (block.endedAt ?? this.now()) - block.startedAt);
-		const status = block.endedAt === undefined ? "running" : block.isError ? "✗" : "✓";
-		const count = lineCount(block.result);
-		const lines = block.endedAt === undefined ? "" : ` · ${count} ${count === 1 ? "line" : "lines"}`;
+		const elapsed = saved?.durationMs ?? (block.startedAt === undefined ? undefined : Math.max(0, (block.endedAt ?? this.now()) - block.startedAt));
+		const status = saved?.kind === "tool" ? saved.status === "error" ? "✗" : saved.status === "ok" ? "✓" : "running" : block.endedAt === undefined ? "running" : block.isError ? "✗" : "✓";
+		const count = saved?.kind === "tool" ? saved.lineCount : lineCount(block.result);
+		const lines = saved?.kind === "tool" || block.endedAt !== undefined ? ` · ${count} ${count === 1 ? "line" : "lines"}` : "";
 		return { name: block.name, argument, stats: `${status} ${duration(elapsed)}${lines}` };
 	}
 }

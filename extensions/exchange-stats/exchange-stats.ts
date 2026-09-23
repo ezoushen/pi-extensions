@@ -1,6 +1,5 @@
 /**
  * exchange-stats.ts — exchange timing and cost, with process lines and block titles.
- * Per-turn card detail remains available on demand.
  *
  * An *exchange* is one uninterrupted work span: from a prompt you submitted until
  * pi has nothing left to do automatically. A *turn* is a single model response
@@ -10,8 +9,7 @@
  *
  * The exchange is the primary unit: the status line always shows the running or
  * last exchange, and a card is appended to the transcript when each one settles.
- * Turn detail is secondary and appears when the card is expanded, showing where
- * the time went — model time against tool time, per turn, with the tools named.
+ * Block titles carry the detail; the card shows only exchange totals.
  *
  * Design notes worth keeping:
  *
@@ -44,12 +42,12 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { AssistantMessageComponent, keyHint, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import { AssistantMessageComponent, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { announce } from "../../shared/announce.ts";
 import { resolveSettings, type SettingsRuntime } from "../../shared/settings.ts";
 import { FoldPicker } from "./src/fold-picker.ts";
 import { HeadlineScheduler } from "./src/headline-scheduler.ts";
-import { ToolFoldModel } from "./src/tool-fold.ts";
+import { ToolFoldModel, type FoldBlockRecord } from "./src/tool-fold.ts";
 import { installThinkingFold, installToolFold } from "./src/tool-render.ts";
 import { Box, Text } from "@earendil-works/pi-tui";
 import type { KeyId } from "@earendil-works/pi-tui";
@@ -134,7 +132,11 @@ interface ExchangeRecord extends TokenTotals {
 	toolMs: number;
 	model: string;
 	stopReason: string;
+	/** Present on exchange entries written after block titles became persistent. */
+	blocks?: FoldBlockRecord[];
 }
+
+type FoldSessionEntry = { type: string; customType?: string; data?: ExchangeRecord; message?: { role: string; timestamp?: number; content?: unknown[]; toolCallId?: string } };
 
 interface StatusContext {
 	hasUI: boolean;
@@ -163,13 +165,6 @@ function fmtCost(cost: number): string {
 	return cost < 0.01 ? `$${cost.toFixed(5)}` : `$${cost.toFixed(4)}`;
 }
 
-function fmtRate(tokensPerSec: number): string {
-	if (!Number.isFinite(tokensPerSec) || tokensPerSec <= 0) return "—";
-	return tokensPerSec < 1_000
-		? `${Math.round(tokensPerSec)} tok/s`
-		: `${(tokensPerSec / 1_000).toFixed(1)}k tok/s`;
-}
-
 function plural(n: number, one: string, many = `${one}s`): string {
 	return n === 1 ? `${n} ${one}` : `${n} ${many}`;
 }
@@ -187,21 +182,6 @@ function openToolText(spans: Map<string, { name: string; start: number }>, now: 
 	if (!longest) return undefined;
 	const extra = spans.size > 1 ? ` (+${spans.size - 1})` : "";
 	return `${longest.name} ${fmtDuration(now - longest.start)}${extra}`;
-}
-
-function expandHint(): string {
-	try {
-		return ` (${keyHint("app.tools.expand", "to expand")})`;
-	} catch {
-		return " (expand for per-turn detail)";
-	}
-}
-
-/** Replays a turn's tool spans as `bash 11.3s, read 0.2s`. */
-function toolBreakdown(turn: TurnRecord): string {
-	return turn.tools
-		.map((tool: ToolSpan) => `${tool.name} ${fmtDuration(tool.ms)}${tool.isError ? " (failed)" : ""}`)
-		.join(", ");
 }
 
 /**
@@ -255,6 +235,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	let warnedAboutThinkingFold = false;
 	let summaryScheduler: HeadlineScheduler | undefined;
 	let summarySession = 0;
+	let restoredEntries: FoldSessionEntry[] = [];
 	const sessionTotals = {
 		...emptyTotals(),
 		exchanges: 0,
@@ -329,9 +310,41 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		stopLiveTimer();
 	}
 
-	// ---- Transcript card: exchange summary, per-turn detail when expanded ----
+	function restoreSession(ctx: { sessionManager?: { getBranch(): unknown[] } }): void {
+		const entries = (ctx.sessionManager?.getBranch() ?? []) as FoldSessionEntry[];
+		restoredEntries = entries;
+		toolFold.clear((id) => {
+			for (let index = restoredEntries.length - 1; index >= 0; index--) {
+				const entry = restoredEntries[index];
+				if (entry.type !== "custom" || entry.customType !== ENTRY_TYPE) continue;
+				const found = entry.data?.blocks?.find((block) => block.id === id);
+				if (found) return found;
+			}
+			return undefined;
+		});
+		exchangeIndex = entries.reduce((highest, entry) => entry.type === "custom" && entry.customType === ENTRY_TYPE && entry.data?.kind === "exchange"
+			? Math.max(highest, entry.data.index) : highest, 0);
+		const lastCompaction = entries.findLastIndex((entry) => entry.type === "compaction");
+		const active = entries.slice(lastCompaction + 1);
+		let nextExchange = active.find((entry) => entry.type === "custom" && entry.customType === ENTRY_TYPE && entry.data?.kind === "exchange")?.data?.index ?? exchangeIndex + 1;
+		let inExchange = false;
+		for (const entry of active) {
+			if (entry.type === "custom" && entry.customType === ENTRY_TYPE && entry.data?.kind === "exchange") {
+				toolFold.endExchange();
+				inExchange = false;
+				nextExchange = entry.data.index + 1;
+			} else if (entry.type === "message" && entry.message?.role === "assistant" && Array.isArray(entry.message.content)) {
+				if (!inExchange) { toolFold.beginExchange(nextExchange); inExchange = true; }
+				toolFold.ingest(entry.message as Parameters<ToolFoldModel["ingest"]>[0]);
+			} else if (entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolCallId) {
+				toolFold.end(entry.message.toolCallId, false, { content: entry.message.content as Array<{ type: string; text?: string }> });
+			}
+		}
+	}
 
-	pi.registerEntryRenderer<ExchangeRecord>(ENTRY_TYPE, (entry, { expanded }, theme) => {
+	// ---- Transcript card ----
+
+	pi.registerEntryRenderer<ExchangeRecord>(ENTRY_TYPE, (entry, _options, theme) => {
 		const data = entry.data;
 		const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
 		if (!data) {
@@ -345,9 +358,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			: `⏱ Exchange ${data.index} · ${fmtDuration(data.durationMs)}`;
 		box.addChild(
 			new Text(
-				theme.fg("accent", theme.bold(headline)) +
-					theme.fg("dim", `  ${data.model}`) +
-					(!expanded && !isSession ? theme.fg("dim", expandHint()) : ""),
+				theme.fg("dim", `${headline}  ${data.model}`),
 				0,
 				0,
 			),
@@ -364,49 +375,15 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		if (data.waitingMs > 0) summary.push(`waiting ${fmtDuration(data.waitingMs)}`);
 		box.addChild(new Text(theme.fg("dim", summary.join(" · ")), 0, 0));
 
-		if (expanded) {
-			for (const turn of data.turns) {
-				const detail: string[] = [`model ${fmtDuration(turn.modelMs)}`];
-				if (turn.toolMs > 0) detail.push(`tools ${fmtDuration(turn.toolMs)} (${toolBreakdown(turn)})`);
-				detail.push(`out ${fmtTokens(turn.output)}`, fmtRate(turn.outputPerSec));
-				box.addChild(
-					new Text(
-						`  ${theme.fg("dim", `#${String(turn.index).padStart(2, " ")}`)}  ` +
-							theme.fg("text", fmtDuration(turn.durationMs).padStart(8, " ")) +
-							theme.fg("dim", `  ${detail.join(" · ")}`),
-						0,
-						0,
-					),
-				);
-			}
-
-			if (isSession && data.turnCount > 0) {
-				// A session card has no per-turn rows, so its own averages stand in.
-				box.addChild(
-					new Text(
-						theme.fg("dim", `avg ${fmtDuration(data.durationMs / data.turnCount)} per turn`),
-						0,
-						0,
-					),
-				);
-			}
-
-			const tokenParts = [
-				`in ${fmtTokens(data.input)}`,
-				`out ${fmtTokens(data.output)}`,
-				`cache r ${fmtTokens(data.cacheRead)} / w ${fmtTokens(data.cacheWrite)}`,
-				`total ${fmtTokens(data.totalTokens)}`,
-				fmtCost(data.cost),
-			];
-			if (data.reasoning > 0) tokenParts.splice(2, 0, `thinking ${fmtTokens(data.reasoning)}`);
-			box.addChild(new Text(theme.fg("dim", tokenParts.join(" · ")), 0, 0));
-
-			if (data.startedAt > 0) {
-				const from = new Date(data.startedAt).toLocaleTimeString();
-				const to = new Date(data.endedAt).toLocaleTimeString();
-				box.addChild(new Text(theme.fg("dim", `${from} → ${to}  stop: ${data.stopReason}`), 0, 0));
-			}
-		}
+		const tokenParts = [
+			`in ${fmtTokens(data.input)}`,
+			`out ${fmtTokens(data.output)}`,
+			`cache r ${fmtTokens(data.cacheRead)} / w ${fmtTokens(data.cacheWrite)}`,
+			`total ${fmtTokens(data.totalTokens)}`,
+			fmtCost(data.cost),
+		];
+		if (data.reasoning > 0) tokenParts.splice(2, 0, `thinking ${fmtTokens(data.reasoning)}`);
+		box.addChild(new Text(theme.fg("dim", tokenParts.join(" · ")), 0, 0));
 
 		return box;
 	});
@@ -459,6 +436,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			warnedAboutThinkingFold = true;
 		}
 		resetExchangeState();
+		restoreSession(ctx);
 		sessionStartedAt = Date.now();
 		setStatus("⏱ ready", ctx);
 	});
@@ -471,6 +449,9 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		thinkingPatch.restore();
 		resetExchangeState();
 	});
+
+	pi.on("session_compact", (_event, ctx) => { restoreSession(ctx); requestRender(); });
+	pi.on("session_tree", (_event, ctx) => { restoreSession(ctx); requestRender(); });
 
 	pi.on("message_update", (event) => {
 		if (event.message.role !== "assistant") return;
@@ -510,7 +491,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		}
 
 		running = true;
-		toolFold.beginExchange();
+		toolFold.beginExchange(exchangeIndex + 1);
 		startedAt = Date.now();
 		promptCount = 1;
 		exchangeIndex++;
@@ -652,6 +633,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			toolMs,
 			model,
 			stopReason,
+			blocks: toolFold.recordsForExchange(exchangeIndex),
 		};
 
 		stopLiveTimer();
@@ -671,6 +653,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 
 		try {
 			pi.appendEntry<ExchangeRecord>(ENTRY_TYPE, record);
+			if (!restoredEntries.some((entry) => entry.data === record)) restoredEntries.push({ type: "custom", customType: ENTRY_TYPE, data: record });
 		} catch {
 			// Entry persistence is unavailable in print/JSON mode and on a stale runner
 			// after /new; the status line below still reports the span.
@@ -685,6 +668,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		setStatus(parts.join(" · "), ctx);
 
 		toolFold.endExchange();
+		toolFold.releaseExchangeRecords();
 		resetExchangeState();
 	});
 
