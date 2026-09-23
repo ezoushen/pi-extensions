@@ -1,6 +1,8 @@
 # pi-exchange-stats
 
 Show timing, token, cache, cost, and tool-use statistics for each Pi exchange.
+Tool calls render as one-line titles with their argument, status, duration, and
+result line count.
 
 An **exchange** is one uninterrupted work span from a submitted prompt until Pi has
 nothing left to do automatically. A **turn** is one model response plus the tools it
@@ -15,6 +17,7 @@ Run `/exstats` to append a cumulative session card.
 ## External contract
 
 Pi must emit its documented session, agent, turn, tool, and UI-prompt lifecycle events.
+Tool folding uses Pi's `ToolExecutionComponent.render` interface from version 0.87.1.
 Assistant messages should include usage and cost fields when the provider supports
 them. No network service or machine-local file is required.
 
@@ -23,7 +26,9 @@ them. No network service or machine-local file is required.
 Missing usage fields are reported as zero; the extension does not invent token or cost
 data. Missing lifecycle events produce an incomplete or absent span. When UI status is
 unavailable, status updates are skipped. If custom-entry persistence is unavailable,
-the live status can still update and the agent turn continues.
+the live status can still update and the agent turn continues. If Pi no longer
+provides the tool render interface, a single warning is shown and tool rows use
+Pi's native renderer; exchange stats continue.
 
 The measurements are process-local. They do not claim provider-side queue time,
 exclusive model compute time, or billing beyond the usage object Pi received.
@@ -39,7 +44,8 @@ from Pi-provided events and context.
 pi install npm:pi-exchange-stats
 ```
 
-Submit a prompt that makes at least one tool call and wait for Pi to settle. Expand the
+Submit a prompt that makes at least one tool call and wait for Pi to settle.
+Check that the tool title shows its status, duration, and result line count. Expand the
 exchange card and verify that its turn count, output tokens, tool names, and wall-time
 breakdown match the transcript. Run `/exstats` and confirm that the session card equals
 the sum of completed exchanges. To check parallel-tool accounting, run two overlapping

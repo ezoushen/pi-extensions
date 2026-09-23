@@ -7,6 +7,7 @@
   ],
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
     "esbuild": "0.28.2",
     "typebox": "*"
   },

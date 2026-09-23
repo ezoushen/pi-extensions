@@ -1,6 +1,6 @@
 /**
- * exchange-stats.ts — timing and cost for each exchange, with per-turn detail on
- * demand.
+ * exchange-stats.ts — exchange timing and cost, with one-line tool titles.
+ * Per-turn card detail remains available on demand.
  *
  * An *exchange* is one uninterrupted work span: from a prompt you submitted until
  * pi has nothing left to do automatically. A *turn* is a single model response
@@ -44,7 +44,10 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { keyHint } from "@earendil-works/pi-coding-agent";
+import { keyHint, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import { announce } from "../../shared/announce.ts";
+import { ToolFoldModel } from "./src/tool-fold.ts";
+import { installToolFold } from "./src/tool-render.ts";
 import { Box, Text } from "@earendil-works/pi-tui";
 
 const ENTRY_TYPE = "exchange-stats";
@@ -213,7 +216,10 @@ function unionMs(runs: ToolRun[]): number {
 	return total + (end - start);
 }
 
-export default function (pi: ExtensionAPI) {
+export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof ToolExecutionComponent = ToolExecutionComponent) {
+	const toolFold = new ToolFoldModel();
+	const toolPatch = installToolFold(toolComponent, toolFold);
+	let warnedAboutToolFold = false;
 	const sessionTotals = {
 		...emptyTotals(),
 		exchanges: 0,
@@ -361,12 +367,17 @@ export default function (pi: ExtensionAPI) {
 	// ---- Lifecycle ----
 
 	pi.on("session_start", (_event, ctx) => {
+		if (!toolPatch.installed && !warnedAboutToolFold) {
+			announce(ctx, "exchange-stats: tool folding unavailable; Pi tool rows remain native", "warning");
+			warnedAboutToolFold = true;
+		}
 		resetExchangeState();
 		sessionStartedAt = Date.now();
 		setStatus("⏱ ready", ctx);
 	});
 
 	pi.on("session_shutdown", () => {
+		toolPatch.restore();
 		resetExchangeState();
 	});
 
@@ -412,11 +423,13 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("tool_execution_start", (event, _ctx) => {
+		toolFold.start(event.toolCallId, event.toolName);
 		if (!running || !activeTurn) return;
 		activeTurn.spans.set(event.toolCallId, { name: event.toolName, start: Date.now() });
 	});
 
 	pi.on("tool_execution_end", (event, _ctx) => {
+		toolFold.end(event.toolCallId, Boolean(event.isError), event.result);
 		if (!running || !activeTurn) return;
 		const open = activeTurn.spans.get(event.toolCallId);
 		if (open) {
@@ -578,3 +591,5 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 }
+
+export default registerExchangeStats;
