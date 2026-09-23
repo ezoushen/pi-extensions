@@ -13,6 +13,13 @@ regardless of Pi's hide-thinking setting. Process lines and block titles use the
 active Pi theme's dim color. Assistant text and opened native content keep Pi's own
 styling.
 
+Press `ctrl+alt+f` to toggle the latest process between its line and block titles.
+Press `ctrl+alt+e` to open or fold every process in the latest exchange. Press
+`ctrl+alt+s` to open the picker; use Up/Down and Enter to toggle an exchange,
+process, or block, and Escape to close it. These controls work while an exchange
+streams and change only the display. In fullscreen mode, left click a process
+line or block title to toggle it.
+
 An **exchange** is one uninterrupted work span from a submitted prompt until Pi has
 nothing left to do automatically. A **turn** is one model response plus the tools it
 invokes, so an exchange can contain several turns. The status line shows the current
@@ -53,8 +60,12 @@ exclusive model compute time, or billing beyond the usage object Pi received.
 
 ## Settings
 
-There are no settings and no environment variables. The package operates entirely
-from Pi-provided events and context.
+The optional `exchange-stats.json` file in Pi's agent directory configures
+`processKey`, `exchangeKey`, and `pickerKey`. Their defaults are `ctrl+alt+f`,
+`ctrl+alt+e`, and `ctrl+alt+s`. Each value must be a modified Pi key such as
+`ctrl+alt+x` or `alt+enter`; an invalid value uses its default and produces one warning.
+The matching environment variables are `PI_EXCHANGE_STATS_PROCESS_KEY`,
+`PI_EXCHANGE_STATS_EXCHANGE_KEY`, and `PI_EXCHANGE_STATS_PICKER_KEY`.
 
 ## Install and verify
 

@@ -12,6 +12,7 @@ function mount(componentClass) {
 		registerEntryRenderer() {},
 		appendEntry(type, data) { entries.push({ type, data }); },
 		registerCommand() {},
+		registerShortcut() {},
 	}, componentClass);
 	const ctx = { hasUI: true, model: { id: "test" }, ui: { setStatus() {}, notify(message) { warnings.push(message); } } };
 	return { handlers, entries, warnings, ctx };

@@ -25,6 +25,7 @@ type ProcessBlock =
 
 interface Process {
 	id: string;
+	exchange: number;
 	blocks: ProcessBlock[];
 	open: boolean;
 }
@@ -145,6 +146,7 @@ export class ToolFoldModel {
 	private seenContent = new Map<number, Set<number>>();
 	private openProcess?: Process;
 	private openThinking = new Set<string>();
+	private currentExchange = 0;
 	private now: () => number;
 	private thinking: ThinkingFoldModel;
 
@@ -192,7 +194,7 @@ export class ToolFoldModel {
 	private append(block: ProcessBlock): void {
 		if (this.processByBlock.has(block.key)) return;
 		if (!this.openProcess) {
-			this.openProcess = { id: block.key, blocks: [], open: false };
+			this.openProcess = { id: block.key, exchange: Math.max(1, this.currentExchange), blocks: [], open: false };
 			this.processList.push(this.openProcess);
 		}
 		this.openProcess.blocks.push(block);
@@ -200,7 +202,23 @@ export class ToolFoldModel {
 	}
 
 	processes(): ReadonlyArray<Process> { return this.processList; }
+	beginExchange(): void { this.currentExchange++; this.openProcess = undefined; }
 	endExchange(): void { this.openProcess = undefined; }
+	toggleLatestProcess(): boolean | undefined {
+		const process = this.processList.at(-1);
+		return process && this.toggleProcess(process.id);
+	}
+	toggleExchange(exchange: number): boolean | undefined {
+		const processes = this.processList.filter((process) => process.exchange === exchange);
+		if (!processes.length) return undefined;
+		const open = processes.some((process) => !process.open);
+		for (const process of processes) process.open = open;
+		return open;
+	}
+	toggleLatestExchange(): boolean | undefined {
+		const process = this.processList.at(-1);
+		return process && this.toggleExchange(process.exchange);
+	}
 	processForThinking(message: ThinkingMessage, index: number): Process | undefined {
 		return this.processByBlock.get(`thinking:${message.timestamp}:${index}`);
 	}

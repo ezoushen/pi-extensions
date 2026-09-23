@@ -7,6 +7,8 @@ interface ToolComponent {
 	args: Record<string, unknown>;
 	result?: { content?: Array<{ type: string; text?: string }> };
 	render(width: number): string[];
+	handleMouse?(event: { type: string; button: string; y: number; width: number; height: number }): unknown;
+	ui?: { requestRender(): void };
 }
 
 interface ToolClass {
@@ -26,6 +28,8 @@ function truncateProcessLine(text: string, width: number): string {
 export function installToolFold(componentClass: ToolClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined): { installed: boolean; restore: () => void } {
 	const prototype = componentClass?.prototype;
 	const original = prototype?.render;
+	const originalMouse = prototype?.handleMouse;
+	const hadOwnMouse = prototype && Object.hasOwn(prototype, "handleMouse");
 	if (typeof original !== "function") return { installed: false, restore() {} };
 
 	function folded(this: ToolComponent, width: number): string[] {
@@ -55,7 +59,30 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 	}
 
 	prototype.render = folded;
-	return { installed: true, restore() { if (prototype.render === folded) prototype.render = original; } };
+	function foldedMouse(this: ToolComponent, event: { type: string; button: string; y: number; width: number; height: number }) {
+		const process = model.processForTool(this.toolCallId);
+		if (event.type === "click" && event.button === "left" && event.y === 0 && process && model.isProcessLead(process.id, `tool:${this.toolCallId}`)) {
+			model.toggleProcess(process.id);
+			this.ui?.requestRender();
+			return { handled: true, render: false };
+		}
+		const titleY = process && model.isProcessLead(process.id, `tool:${this.toolCallId}`) ? 1 : 0;
+		if (event.type === "click" && event.button === "left" && event.y === titleY && (!process || model.isProcessOpen(process.id))) {
+			if (model.toggle(this.toolCallId) !== undefined) {
+				this.ui?.requestRender();
+				return { handled: true, render: false };
+			}
+		}
+		return originalMouse?.call(this, event);
+	}
+	prototype.handleMouse = foldedMouse;
+	return { installed: true, restore() {
+		if (prototype.render === folded) prototype.render = original;
+		if (prototype.handleMouse === foldedMouse) {
+			if (hadOwnMouse) prototype.handleMouse = originalMouse;
+			else delete prototype.handleMouse;
+		}
+	} };
 }
 
 
@@ -78,7 +105,7 @@ interface AssistantClass {
 }
 
 /** Replaces only Pi's thinking children and keeps its text rendering in place. */
-export function installThinkingFold(componentClass: AssistantClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined): { installed: boolean; restore: () => void } {
+export function installThinkingFold(componentClass: AssistantClass, model: ToolFoldModel, getTheme: () => TitleTheme | undefined = () => undefined, requestRender: () => void = () => {}): { installed: boolean; restore: () => void } {
 	const prototype = componentClass?.prototype;
 	const original = prototype?.updateContent;
 	if (typeof original !== "function") return { installed: false, restore() {} };
@@ -128,12 +155,14 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 					render(width: number) { return model.isProcessOpen(process.id) ? preceding.render(width) : []; },
 				};
 			}
-			const onMouse = (event: { type: string; button: string }) => {
+			const onMouse = (event: { type: string; button: string; y: number }) => {
 				if (event.type !== "click" || event.button !== "left") return undefined;
-				if (process && !model.isProcessOpen(process.id)) model.toggleProcess(process.id);
+				if (process && lead && event.y === 0) model.toggleProcess(process.id);
+				else if (process && !model.isProcessOpen(process.id)) model.toggleProcess(process.id);
 				else model.toggleThinking(message, run.index);
 				folded.call(this, message, isStreaming);
-				return { handled: true };
+				requestRender();
+				return { handled: true, render: false };
 			};
 			const component = this;
 			const child = {
