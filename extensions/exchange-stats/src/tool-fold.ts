@@ -434,7 +434,7 @@ export class ToolFoldModel {
 			: block?.kind === "thinking" ? { headline: traceHeadline(block.trace, false), headlineSource: "trace" as const } : undefined;
 		const pending = this.pendingThinking.get(key);
 		if (pending?.kind === "thinking") {
-			if (headline && next) Object.assign(pending, next);
+			if (next) Object.assign(pending, next);
 			return undefined;
 		}
 		const saved = this.saved?.(key);

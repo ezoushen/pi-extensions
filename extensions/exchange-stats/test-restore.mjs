@@ -108,6 +108,44 @@ test("a model headline that resolves after the exchange settles is shown live an
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("a final headline failure after the exchange settles reverts the saved model headline", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-fold-revert-"));
+	const entries = [];
+	const pending = [];
+	const registry = { find: () => ({}), streamSimple: () => ({ result: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) }) };
+	const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve)); };
+	try {
+		writeFileSync(join(dir, "exchange-stats.json"), JSON.stringify({ summaryModel: "stub/headline" }));
+		const first = mount(entries, dir, registry);
+		const trace = "Inspecting reverted work. " + "x ".repeat(900);
+		const content = [{ type: "thinking", thinking: trace }, { type: "text", text: "Done" }];
+		first.handlers.get("before_agent_start")({}, first.ctx);
+		first.handlers.get("message_update")({ message: assistant(501, content), assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: trace } }, first.ctx);
+		await flush();
+		pending.shift().resolve({ stopReason: "stop", content: [{ type: "text", text: "Live model headline" }] });
+		await flush();
+		first.handlers.get("message_end")({ message: assistant(501, content) }, first.ctx);
+		entries.push({ type: "message", message: assistant(501, content) });
+		first.handlers.get("agent_settled")({}, first.ctx);
+		assert.equal(entries.find((entry) => entry.customType === "exchange-stats").data.blocks[0].headlineSource, "model");
+		await flush();
+		pending.shift().reject(new Error("provider down"));
+		await flush();
+		first.shortcuts.get("ctrl+alt+f")(first.ctx);
+		const live = new AssistantMessageComponent();
+		live.updateContent(assistant(501, content), false);
+		assert.match(live.render(100).join("\n"), /◈ Inspecting reverted work\. ·/);
+		first.close();
+		const second = mount(entries, dir, registry);
+		second.shortcuts.get("ctrl+alt+f")(second.ctx);
+		const restored = new AssistantMessageComponent();
+		restored.updateContent(assistant(501, content), false);
+		assert.match(restored.render(100).join("\n"), /◈ Inspecting reverted work\. · .* · 903 words/);
+		assert.doesNotMatch(restored.render(100).join("\n"), /≈/);
+		second.close();
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("a 0.1.0 entry keeps its card and derives an untimed thinking title from its message", () => {
 	const oldRecord = { kind: "exchange", index: 1, durationMs: 4000, turnCount: 1, promptCount: 1,
 		model: "old-model", input: 2, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0,

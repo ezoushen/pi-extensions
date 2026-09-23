@@ -9,7 +9,8 @@ Tool titles show the argument, status, duration, and result line count. Thinking
 titles show the trace's last complete sentence, or `Thinking` until one completes.
 With `summaryModel` configured, a short model headline takes its place when ready;
 the leading `≈` marks it as a summary. A failed or timed-out request returns to
-the sentence fallback and gives one warning per session.
+the sentence fallback, on screen and in the saved entry, even after an earlier
+model headline; it gives one warning per session.
 The headline is shortened first to make room for duration and stats.
 Titles also show elapsed time, thinking tokens and rate while streaming; a `~` marks
 token estimates when the provider has not reported reasoning usage. Settled titles

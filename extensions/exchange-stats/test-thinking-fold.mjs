@@ -67,3 +67,21 @@ test("headline sentence boundaries keep filenames and versions intact", () => {
 	assert.match(title("继续检查？下一步", true), /^◈ 继续检查？ · /);
 	assert.match(title("继续检查！下一步", true), /^◈ 继续检查！ · /);
 });
+
+test("a failed final headline after a live model headline reverts title and record to the trace sentence", () => {
+	const model = new ToolFoldModel(() => 1000);
+	const trace = "Checking the fallback. More";
+	const snapshot = () => ({ role: "assistant", timestamp: 77, content: [{ type: "thinking", thinking: trace }] });
+	model.beginExchange(1);
+	model.ingest(snapshot());
+	model.observeThinking(snapshot(), { type: "thinking_delta", contentIndex: 0, delta: trace });
+	model.setThinkingHeadline({ timestamp: 77 }, 0, "≈ Live model headline");
+	assert.match(model.thinkingTitle({ timestamp: 77 }, 0, trace, true), /≈ Live model headline/);
+	model.settleThinking(snapshot());
+	model.setThinkingHeadline({ timestamp: 77 }, 0, undefined);
+	assert.match(model.thinkingTitle({ timestamp: 77 }, 0, trace, false), /◈ Checking the fallback\. ·/);
+	assert.doesNotMatch(model.thinkingTitle({ timestamp: 77 }, 0, trace, false), /≈/);
+	const [record] = model.recordsForExchange(1);
+	assert.equal(record.headline, "Checking the fallback.");
+	assert.equal(record.headlineSource, "trace");
+});
