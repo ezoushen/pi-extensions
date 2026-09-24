@@ -189,6 +189,15 @@ function fmtCost(cost: number): string {
 	return cost < 0.01 ? `$${cost.toFixed(5)}` : `$${cost.toFixed(4)}`;
 }
 
+function fmtCacheUsage(cacheRead: number, cacheWrite: number): string | undefined {
+	const read = cacheRead > 0 ? fmtTokens(cacheRead) : undefined;
+	const written = cacheWrite > 0 ? fmtTokens(cacheWrite) : undefined;
+	if (read && written) return `cache ${read} / ${written} written`;
+	if (read) return `cache ${read}`;
+	if (written) return `cache ${written} written`;
+	return undefined;
+}
+
 function plural(n: number, one: string, many = `${one}s`): string {
 	return n === 1 ? `${n} ${one}` : `${n} ${many}`;
 }
@@ -414,35 +423,21 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		const finishTime = data.endedAt === undefined ? "" : ` · ${fmtLocalFinishTime(data.endedAt)}`;
 		const headline = isSession
 			? `📊 Session · ${plural(data.turnCount, "turn")} across ${plural(data.index, "exchange")}`
-			: `⏱ Exchange ${data.index} · ${fmtDuration(data.durationMs)}${finishTime}`;
+			: `⏱ ${fmtDuration(data.durationMs)}${finishTime}`;
 		box.addChild(
 			new Text(
-				dimText(`${headline}  ${data.model}`),
+				dimText(`${headline} · ${data.model}`),
 				0,
 				0,
 			),
 		);
 
-		const summary: string[] = [];
-		if (isSession) {
-			summary.push(`active ${fmtDuration(data.durationMs)}`);
-		} else {
-			summary.push(plural(data.turnCount, "turn"), plural(data.promptCount, "prompt"));
-		}
-		if (data.toolMs > 0) summary.push(`tools ${fmtDuration(data.toolMs)}`);
-		summary.push(`out ${fmtTokens(data.output)}`, fmtCost(data.cost));
+		const summary = [`in ${fmtTokens(data.input)}`, `out ${fmtTokens(data.output)}`];
+		const cache = fmtCacheUsage(data.cacheRead, data.cacheWrite);
+		if (cache) summary.push(cache);
 		if (data.waitingMs > 0) summary.push(`waiting ${fmtDuration(data.waitingMs)}`);
+		summary.push(fmtCost(data.cost));
 		box.addChild(new Text(dimText(summary.join(" · ")), 0, 0));
-
-		const tokenParts = [
-			`in ${fmtTokens(data.input)}`,
-			`out ${fmtTokens(data.output)}`,
-			`cache r ${fmtTokens(data.cacheRead)} / w ${fmtTokens(data.cacheWrite)}`,
-			`total ${fmtTokens(data.totalTokens)}`,
-			fmtCost(data.cost),
-		];
-		if (data.reasoning > 0) tokenParts.splice(2, 0, `thinking ${fmtTokens(data.reasoning)}`);
-		box.addChild(new Text(dimText(tokenParts.join(" · ")), 0, 0));
 
 		return box;
 	});
@@ -756,7 +751,8 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		if (toolMs > 0 && durationMs > 0 && toolMs / durationMs >= TOOL_SHARE_NOTE) {
 			parts.push(`tools ${fmtDuration(toolMs)}`);
 		}
-		parts.push(`out ${fmtTokens(totals.output)}`, fmtCost(totals.cost));
+		parts.push(`out ${fmtTokens(totals.output)}`);
+		if (totals.cost > 0) parts.push(fmtCost(totals.cost));
 		if (waitingMs > 0) parts.push(`waiting ${fmtDuration(waitingMs)}`);
 		setStatus(parts.join(" · "), ctx);
 
