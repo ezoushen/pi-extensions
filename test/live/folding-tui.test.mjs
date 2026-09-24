@@ -63,14 +63,29 @@ function expectedFinishLabel(at, now, timeZone) {
 
 function exchangeCardRows(value) {
 	const rows = value.split("\n").map((line) => line.trim());
-	const headlines = rows.filter((line) => /^⏱ (?:\d+(?:\.\d+)?ms|\d+(?:\.\d+)?s|\d+m(?:\d+s)?) · .+ · free-model$/.test(line));
-	const metrics = rows.filter((line) => /^in \S+ · out \S+(?: · cache .+)?(?: · waiting \S+)? · \$0$/.test(line));
+	const headlinePattern = /^⏱ (?:\d+(?:\.\d+)?ms|\d+(?:\.\d+)?s|\d+m(?:\d+s)?) · .+ · free-model$/;
+	const metricsPattern = /^in \S+ · out \S+(?: · cache .+)?(?: · waiting \S+)? · \$0$/;
+	const headlineIndex = rows.findLastIndex((line) => headlinePattern.test(line));
+	const headline = headlineIndex < 0 ? undefined : rows[headlineIndex];
+	const nextRow = headlineIndex < 0 ? undefined : rows[headlineIndex + 1];
 	return {
-		headline: headlines.at(-1),
-		metrics: metrics.at(-1),
-		count: headlines.length,
+		headline,
+		metrics: nextRow && metricsPattern.test(nextRow) ? nextRow : undefined,
+		count: rows.filter((line) => headlinePattern.test(line)).length,
 	};
 }
+
+test("exchangeCardRows does not pair the latest headline with earlier metrics", () => {
+	const value = [
+		"⏱ 1s · 13:38:34 · free-model",
+		"in 9.5k · out 234 · $0",
+		"⏱ 2s · 13:38:35 · free-model",
+	].join("\n");
+	const result = exchangeCardRows(value);
+	assert.equal(result.count, 2);
+	assert.equal(result.headline, "⏱ 2s · 13:38:35 · free-model");
+	assert.equal(result.metrics, undefined);
+});
 
 test("packed exchange-stats folds streamed reasoning and native tool output in a real Pi terminal", async (t) => {
 	const piBin = process.env.PI_BIN ?? executable("pi");
