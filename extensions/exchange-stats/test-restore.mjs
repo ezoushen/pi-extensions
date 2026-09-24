@@ -211,7 +211,7 @@ test("a 0.1.0 entry keeps its card and derives an untimed thinking title from it
 		const theme = { bg: (_name, value) => value, fg: (_name, value) => value };
 		const card = mounted.renderer()(entries[1], { expanded: true }, theme).render(90)
 			.map((line) => line.trim()).filter(Boolean);
-		assert.deepEqual(card, ["⏱ 4.0s · old-model", "in 2 · out 4 · $0"]);
+		assert.deepEqual(card, ["⏱ 4.0s · old-model in 2 · out 4 · $0"]);
 	} finally { mounted.close(); }
 });
 

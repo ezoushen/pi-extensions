@@ -63,22 +63,30 @@ function expectedFinishLabel(at, now, timeZone) {
 
 function exchangeCardRows(value) {
 	const rows = value.split("\n").map((line) => line.trim());
-	const headlinePattern = /^⏱ (?:\d+(?:\.\d+)?ms|\d+(?:\.\d+)?s|\d+m(?:\d+s)?) · .+ · free-model$/;
+	const cardPattern = /^(⏱ (?:\d+(?:\.\d+)?ms|\d+(?:\.\d+)?s|\d+m(?:\d+s)?) · .+ · free-model)(?: (.*))?$/;
 	const metricsPattern = /^in \S+ · out \S+(?: · cache .+)?(?: · waiting \S+)? · \$0$/;
-	const headlineIndex = rows.findLastIndex((line) => headlinePattern.test(line));
-	const headline = headlineIndex < 0 ? undefined : rows[headlineIndex];
-	const nextRow = headlineIndex < 0 ? undefined : rows[headlineIndex + 1];
+	const cards = rows.map((line) => cardPattern.exec(line)).filter(Boolean);
+	const latest = cards.at(-1);
+	const headline = latest?.[1];
+	const metrics = latest?.[2];
 	return {
 		headline,
-		metrics: nextRow && metricsPattern.test(nextRow) ? nextRow : undefined,
-		count: rows.filter((line) => headlinePattern.test(line)).length,
+		metrics: metrics && metricsPattern.test(metrics) ? metrics : undefined,
+		count: cards.length,
 	};
 }
 
+test("exchangeCardRows reads the headline and metrics from one row", () => {
+	const value = "⏱ 2s · 13:38:35 · free-model in 9.5k · out 234 · $0";
+	const result = exchangeCardRows(value);
+	assert.equal(result.count, 1);
+	assert.equal(result.headline, "⏱ 2s · 13:38:35 · free-model");
+	assert.equal(result.metrics, "in 9.5k · out 234 · $0");
+});
+
 test("exchangeCardRows does not pair the latest headline with earlier metrics", () => {
 	const value = [
-		"⏱ 1s · 13:38:34 · free-model",
-		"in 9.5k · out 234 · $0",
+		"⏱ 1s · 13:38:34 · free-model in 9.5k · out 234 · $0",
 		"⏱ 2s · 13:38:35 · free-model",
 	].join("\n");
 	const result = exchangeCardRows(value);
