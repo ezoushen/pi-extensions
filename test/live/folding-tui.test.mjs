@@ -102,7 +102,7 @@ test("exchangeCardRows does not pair the latest headline with earlier metrics", 
 	assert.equal(result.metrics, undefined);
 });
 
-test("packed exchange-stats folds streamed reasoning and native tool output in a real Pi terminal", async (t) => {
+test("packed pi-focus-mode folds streamed reasoning and native tool output in a real Pi terminal", async (t) => {
 	const piBin = process.env.PI_BIN ?? executable("pi");
 	const python = executable("python3");
 	let Terminal;
@@ -114,7 +114,7 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 	const timeZone = "Asia/Taipei";
 	const agentDir = mkdtempSync(join(tmpdir(), "pi-fold-tui-"));
 	const tarDir = mkdtempSync(join(tmpdir(), "pi-fold-pack-"));
-	const evidencePath = process.env.PI_EXCHANGE_STATS_EVIDENCE_PATH;
+	const evidencePath = process.env.PI_FOCUS_MODE_EVIDENCE_PATH;
 	let stub;
 	let child;
 	let ansiCapture = "";
@@ -144,10 +144,10 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 				{ delayMs: 300, delta: { content: "Both file contents are available.\n" } },
 			] };
 		});
-		const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", tarDir, join(root, "extensions/exchange-stats")], { encoding: "utf8" }))[0];
+		const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", tarDir, join(root, "extensions/focus-mode")], { encoding: "utf8" }))[0];
 		execFileSync("npm", ["install", "--offline", "--ignore-scripts", "--omit=peer", "--no-audit", "--no-fund", join(tarDir, packed.filename)], { cwd: agentDir, encoding: "utf8" });
-		const packagePath = join(agentDir, "node_modules/pi-exchange-stats");
-		assert.ok(existsSync(join(packagePath, "exchange-stats.js")));
+		const packagePath = join(agentDir, "node_modules/pi-focus-mode");
+		assert.ok(existsSync(join(packagePath, "focus-mode.js")));
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({
 			defaultProvider: "stub", defaultModel: "free-model", defaultProjectTrust: "never",
 			packages: [packagePath],

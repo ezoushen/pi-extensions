@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AssistantMessageComponent, ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
-import { registerExchangeStats } from "./exchange-stats.ts";
+import { registerExchangeStats } from "./focus-mode.ts";
 
 initTheme("dark");
 

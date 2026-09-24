@@ -11,7 +11,7 @@ thinking and tool calls into compact lines.
 | [`pi-prefix-stabilizer`](extensions/prefix-stabilizer) | Keeps pi's system prompt byte-stable so a server's KV prefix cache survives across turns and resumes. Normalises the install path, sorts tools deterministically, and warns once when the prompt genuinely drifts. |
 | [`pi-compaction-cache`](extensions/compaction-cache) | Makes `/compact` reuse that cache instead of re-prefilling the window from cold, by building the summarization request as a true prefix of the live conversation. |
 | [`pi-cmem`](extensions/cmem) | Bridges pi to a [claude-mem](https://github.com/thedotmack/claude-mem) worker over its HTTP API, so pi sessions share one memory namespace with other agents working in the same repository. |
-| [`pi-exchange-stats`](extensions/exchange-stats) | Timing and cost for each exchange, in the status line and an exchange card. Folds each run of thinking and tool calls into one process line, with per-block titles and Pi's native output one toggle away. |
+| [`pi-focus-mode`](extensions/focus-mode) | Keeps the transcript focused by folding thinking and tool calls into progress lines and block titles, with exchange stats in the status line and summary card. |
 
 ## Install
 
@@ -19,7 +19,7 @@ thinking and tool calls into compact lines.
 pi install npm:pi-prefix-stabilizer
 pi install npm:pi-compaction-cache
 pi install npm:pi-cmem
-pi install npm:pi-exchange-stats
+pi install npm:pi-focus-mode
 ```
 
 Each package is independent. Install only what you want.
@@ -55,11 +55,11 @@ package name:
 | `pi-prefix-stabilizer` | `pi-prefix-stabilizer.json` |
 | `pi-compaction-cache` | `compaction-cache.json` |
 | `pi-cmem` | `pi-cmem.json` |
-| `pi-exchange-stats` | `exchange-stats.json` |
+| `pi-focus-mode` | `focus-mode.json` |
 
-`pi-exchange-stats` is the exception to step 4: its fold keys and `cursorMode` come only
+`pi-focus-mode` is the exception to step 4: its fold keys and `cursorMode` come only
 from the file in your pi agent directory and their environment variables. Only
-`summaryModel` also reads `<project>/.pi/exchange-stats.json`, and only when the project
+`summaryModel` also reads `<project>/.pi/focus-mode.json`, and only when the project
 is trusted.
 
 ## Behaviour when something is missing

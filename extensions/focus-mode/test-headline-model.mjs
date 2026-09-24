@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { AssistantMessageComponent, initTheme, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { startStubProvider } from "../../test/live/stub-provider.mjs";
-import { registerExchangeStats } from "./exchange-stats.ts";
+import { registerExchangeStats } from "./focus-mode.ts";
 
 initTheme("dark");
 
@@ -23,7 +23,7 @@ test("registered Pi model receives a bounded non-reasoning request and supplies 
 	const dir = mkdtempSync(join(tmpdir(), "pi-headline-model-"));
 	const handlers = new Map();
 	try {
-		writeFileSync(join(dir, "exchange-stats.json"), JSON.stringify({ summaryModel: "stub/headline-model" }));
+		writeFileSync(join(dir, "focus-mode.json"), JSON.stringify({ summaryModel: "stub/headline-model" }));
 		writeFileSync(join(dir, "models.json"), JSON.stringify({ providers: { stub: {
 			baseUrl: stub.baseUrl, api: "openai-completions", apiKey: "stub-key",
 			models: [{ id: "headline-model", name: "Headline stub", reasoning: true, input: ["text"],
