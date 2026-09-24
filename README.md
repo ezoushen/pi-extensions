@@ -1,9 +1,9 @@
 # pi-extensions
 
-Four extensions for the [pi coding agent](https://pi.dev), published from one repository.
+Five extensions for the [pi coding agent](https://pi.dev), published from one repository.
 
-Three of them exist because a long-running agent session repeatedly pays to re-read
-context a server already has. The fourth just tells you what a turn cost.
+Three help long-running sessions reuse context. The other two help you steer a run
+and see what it cost.
 
 | package | what it does |
 |---|---|
@@ -11,6 +11,7 @@ context a server already has. The fourth just tells you what a turn cost.
 | [`pi-compaction-cache`](extensions/compaction-cache) | Makes `/compact` reuse that cache instead of re-prefilling the window from cold, by building the summarization request as a true prefix of the live conversation. |
 | [`pi-cmem`](extensions/cmem) | Bridges pi to a [claude-mem](https://github.com/thedotmack/claude-mem) worker over its HTTP API, so pi sessions share one memory namespace with other agents working in the same repository. |
 | [`pi-exchange-stats`](extensions/exchange-stats) | Timing and cost for each exchange, in the status line, with per-turn detail on demand. |
+| [`pi-interrupt-steer`](extensions/interrupt-steer) | Interrupts a running turn and sends the editor text as one new user message. |
 
 ## Install
 
@@ -19,6 +20,7 @@ pi install npm:pi-prefix-stabilizer
 pi install npm:pi-compaction-cache
 pi install npm:pi-cmem
 pi install npm:pi-exchange-stats
+pi install npm:pi-interrupt-steer
 ```
 
 Each package is independent. Install only what you want.
@@ -55,14 +57,15 @@ package name:
 | `pi-compaction-cache` | `compaction-cache.json` |
 | `pi-cmem` | `pi-cmem.json` |
 | `pi-exchange-stats` | none — it reads only what pi supplies |
+| `pi-interrupt-steer` | `pi-interrupt-steer.json` |
 
 ## Behaviour when something is missing
 
-None of these four is correctness-critical, so none of them takes a session down. A
+None of these five is correctness-critical, so none of them takes a session down. A
 malformed settings file degrades to the documented defaults. An unreachable peer
-service is reported, not fatal. Every such announcement is made **once** per session
-per distinct reason — and when pi is running non-interactively, where there is no UI to
-notify, it goes to stderr instead of vanishing.
+service is reported, not fatal. Warnings are made **once** per session per distinct
+reason — and when pi is running non-interactively, where there is no UI to notify,
+they go to stderr instead of vanishing.
 
 Silence is the failure mode these packages are built to avoid. If one of them decides
 not to act, it says so.
