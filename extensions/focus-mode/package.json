@@ -1,12 +1,12 @@
 {
-  "name": "pi-exchange-stats",
+  "name": "pi-focus-mode",
   "version": "0.1.0",
-  "description": "Show timing and cost for each Pi exchange.",
+  "description": "Keep Pi exchanges focused with foldable progress and stats.",
   "type": "module",
-  "main": "./exchange-stats.js",
-  "exports": "./exchange-stats.js",
+  "main": "./focus-mode.js",
+  "exports": "./focus-mode.js",
   "files": [
-    "exchange-stats.js",
+    "focus-mode.js",
     "README.md",
     "LICENSE"
   ],
@@ -17,9 +17,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ezoushen/pi-extensions.git",
-    "directory": "extensions/exchange-stats"
+    "directory": "extensions/focus-mode"
   },
-  "homepage": "https://github.com/ezoushen/pi-extensions/tree/main/extensions/exchange-stats#readme",
+  "homepage": "https://github.com/ezoushen/pi-extensions/tree/main/extensions/focus-mode#readme",
   "bugs": {
     "url": "https://github.com/ezoushen/pi-extensions/issues"
   },
@@ -32,7 +32,7 @@
   },
   "pi": {
     "extensions": [
-      "./exchange-stats.js"
+      "./focus-mode.js"
     ]
   }
 }

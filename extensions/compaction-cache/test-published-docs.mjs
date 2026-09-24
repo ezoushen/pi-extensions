@@ -55,8 +55,9 @@ const packageRequirements = {
 		"| `fallbackPath` | `\"\"` |",
 		"an unreachable worker produces one warning",
 	],
-	"pi-exchange-stats": [
-		"There are no settings and no environment variables",
+	"pi-focus-mode": [
+		"`processKey`, `exchangeKey`, and `pickerKey`",
+		"`ctrl+alt+e`, and `ctrl+alt+s`",
 		"Missing usage fields are reported as zero",
 	],
 };

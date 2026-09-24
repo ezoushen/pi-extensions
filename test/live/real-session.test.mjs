@@ -27,11 +27,11 @@ import { startStubProvider } from "./stub-provider.mjs";
 import { spawnPiRpc } from "./rpc-client.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const PACKAGES = ["prefix-stabilizer", "compaction-cache", "exchange-stats", "cmem"];
+const PACKAGES = ["prefix-stabilizer", "compaction-cache", "focus-mode", "cmem"];
 const PACKAGE_NAMES = {
 	"prefix-stabilizer": "pi-prefix-stabilizer",
 	"compaction-cache": "pi-compaction-cache",
-	"exchange-stats": "pi-exchange-stats",
+	"focus-mode": "pi-focus-mode",
 	cmem: "pi-cmem",
 };
 
@@ -238,7 +238,7 @@ test("packed tarballs, installed into a scratch agent directory, load and act in
 				);
 				for (const [cmd, pkg] of [
 					["compaction-cache-status", "compaction-cache"],
-					["exstats", "exchange-stats"],
+					["exstats", "focus-mode"],
 					["memory-status", "cmem"],
 				]) {
 					assert.ok(commandsByName[cmd], `missing command: ${cmd}`);

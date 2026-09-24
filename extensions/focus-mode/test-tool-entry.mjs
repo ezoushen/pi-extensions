@@ -1,0 +1,104 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { registerExchangeStats } from "./focus-mode.ts";
+import { AssistantMessageComponent, ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
+
+function mount(componentClass) {
+	const handlers = new Map();
+	const entries = [];
+	const warnings = [];
+	registerExchangeStats({
+		on(name, handler) { handlers.set(name, handler); },
+		registerEntryRenderer() {},
+		appendEntry(type, data) { entries.push({ type, data }); },
+		registerCommand() {},
+		registerShortcut() {},
+	}, componentClass);
+	const ctx = { hasUI: true, model: { id: "test" }, ui: { setStatus() {}, notify(message) { warnings.push(message); } } };
+	return { handlers, entries, warnings, ctx };
+}
+
+test("missing render warns once while the exchange card still settles", () => {
+	class MissingRender {}
+	const mounted = mount(MissingRender);
+	mounted.handlers.get("session_start")({}, mounted.ctx);
+	mounted.handlers.get("session_start")({}, mounted.ctx);
+	assert.equal(mounted.warnings.length, 1);
+	mounted.handlers.get("before_agent_start")({}, mounted.ctx);
+	mounted.handlers.get("turn_start")({ turnIndex: 1 }, mounted.ctx);
+	mounted.handlers.get("turn_end")({ message: { role: "assistant", stopReason: "stop" } }, mounted.ctx);
+	mounted.handlers.get("agent_settled")({}, mounted.ctx);
+	assert.equal(mounted.entries.length, 1);
+	assert.equal(mounted.entries[0].type, "exchange-stats");
+	mounted.handlers.get("session_shutdown")();
+});
+
+test("session shutdown restores the component render prototype identity", () => {
+	class StubTool { render() { return ["native"]; } }
+	const original = StubTool.prototype.render;
+	const mounted = mount(StubTool);
+	assert.equal(StubTool.prototype.render, original);
+	mounted.handlers.get("session_start")({}, mounted.ctx);
+	assert.notEqual(StubTool.prototype.render, original);
+	mounted.handlers.get("session_shutdown")();
+	assert.equal(StubTool.prototype.render, original);
+});
+
+
+test("Pi tool events drive a real component title", () => {
+	initTheme("dark");
+	const mounted = mount(ToolExecutionComponent);
+	const tool = new ToolExecutionComponent("bash", "call-entry", { command: "pwd" }, {}, undefined, { requestRender() {} }, ".");
+	try {
+		mounted.handlers.get("session_start")({}, mounted.ctx);
+		mounted.handlers.get("before_agent_start")({}, mounted.ctx);
+		mounted.handlers.get("turn_start")({ turnIndex: 1 }, mounted.ctx);
+		mounted.handlers.get("tool_execution_start")({ toolCallId: "call-entry", toolName: "bash", args: { command: "pwd" } }, mounted.ctx);
+		const result = { content: [{ type: "text", text: "one\ntwo" }], isError: false };
+		tool.updateResult(result);
+		mounted.handlers.get("tool_execution_end")({ toolCallId: "call-entry", toolName: "bash", result, isError: false }, mounted.ctx);
+		const lines = tool.render(80);
+		assert.equal(lines.length, 1);
+		assert.match(lines[0], /bash.*pwd.*✓.*2 lines/);
+	} finally { mounted.handlers.get("session_shutdown")(); }
+});
+
+test("Pi message events drive thinking titles and shutdown restores the component", () => {
+	initTheme("dark");
+	const original = AssistantMessageComponent.prototype.updateContent;
+	const mounted = mount(ToolExecutionComponent);
+	const message = { role: "assistant", content: [{ type: "thinking", thinking: "checking the answer" }], stopReason: "stop" };
+	try {
+		mounted.handlers.get("session_start")({}, mounted.ctx);
+		mounted.handlers.get("message_update")({ message, assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "checking the answer" } }, mounted.ctx);
+		const component = new AssistantMessageComponent();
+		component.updateContent(message, true);
+		assert.match(component.render(80).join("\n"), /Thinking.*~\d+ tok/);
+		mounted.handlers.get("message_end")({ message }, mounted.ctx);
+		component.updateContent(message, false);
+		assert.match(component.render(80).join("\n"), /Thinking.*3 words/);
+	} finally { mounted.handlers.get("session_shutdown")(); }
+	assert.equal(AssistantMessageComponent.prototype.updateContent, original);
+});
+
+test("session UI theme supplies dim ANSI to both titles and follows theme changes", () => {
+	initTheme("dark");
+	const mounted = mount(ToolExecutionComponent);
+	let ansi = "\x1b[38;2;80;80;80m";
+	Object.defineProperty(mounted.ctx.ui, "theme", { get: () => ({ fg(name, value) {
+		assert.equal(name, "dim");
+		return `${ansi}${value}\x1b[0m`;
+	} }) });
+	try {
+		mounted.handlers.get("session_start")({}, mounted.ctx);
+		const tool = new ToolExecutionComponent("bash", "theme-call", { command: "pwd" }, {}, undefined, { requestRender() {} }, ".");
+		const message = { role: "assistant", timestamp: 90, content: [{ type: "thinking", thinking: "trace" }], stopReason: "stop" };
+		const assistant = new AssistantMessageComponent();
+		assistant.updateContent(message, false);
+		assert.match(tool.render(80)[0], /\x1b\[38;2;80;80;80m/);
+		assert.match(assistant.render(80).join("\n"), /\x1b\[38;2;80;80;80m/);
+		ansi = "\x1b[38;2;120;120;120m";
+		assert.match(tool.render(80)[0], /\x1b\[38;2;120;120;120m/);
+		assert.match(assistant.render(80).join("\n"), /\x1b\[38;2;120;120;120m/);
+	} finally { mounted.handlers.get("session_shutdown")(); }
+});

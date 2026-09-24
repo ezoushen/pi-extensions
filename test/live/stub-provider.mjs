@@ -1,11 +1,11 @@
-// A minimal OpenAI-compatible chat-completions stub for the live-session
-// test in this directory. Started and stopped by that test only, on an
+// A minimal OpenAI-compatible chat-completions stub for live-session and
+// focus-mode model tests. Started and stopped by each caller, on an
 // OS-assigned loopback port -- it is a fixture, not a server, and it never
 // reaches an inference lane. Every request body is recorded verbatim so the
 // test can assert on what pi's extensions actually put on the wire.
 import { createServer } from "node:http";
 
-export function startStubProvider() {
+export function startStubProvider(replyForRequest) {
 	const requests = [];
 
 	const server = createServer((req, res) => {
@@ -15,7 +15,7 @@ export function startStubProvider() {
 		}
 		let body = "";
 		req.on("data", (chunk) => (body += chunk));
-		req.on("end", () => {
+		req.on("end", async () => {
 			let parsed;
 			try {
 				parsed = JSON.parse(body);
@@ -36,11 +36,29 @@ export function startStubProvider() {
 			const isSummarization = /structured summary|context checkpoint/i.test(
 				JSON.stringify(parsed.messages ?? []),
 			);
-			const replyText = isSummarization
+			const reply = replyForRequest?.(parsed, requests.length);
+			const replyText = typeof reply === "string" ? reply : (isSummarization
 				? "## Goal\nStub summary of the conversation so far.\n"
-				: "Acknowledged (stub reply). Padded so the comparison-text probe (>=40 chars) matches this turn.";
+				: "Acknowledged (stub reply). Padded so the comparison-text probe (>=40 chars) matches this turn.");
 
 			res.writeHead(200, { "Content-Type": "text/event-stream" });
+			const chunk = (delta, finishReason = null, usage) => res.write(
+				`data: ${JSON.stringify({
+					id, object: "chat.completion.chunk", created, model,
+					choices: [{ index: 0, delta, finish_reason: finishReason }],
+					...(usage ? { usage } : {}),
+				})}\n\n`,
+			);
+			if (reply && typeof reply === "object") {
+				for (const step of reply.steps) {
+					if (step.delayMs) await new Promise((resolve) => setTimeout(resolve, step.delayMs));
+					if (res.destroyed) return;
+					chunk(step.delta);
+				}
+				chunk({}, reply.finishReason ?? "stop", { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 });
+				res.end("data: [DONE]\n\n");
+				return;
+			}
 			res.write(
 				`data: ${JSON.stringify({
 					id,
