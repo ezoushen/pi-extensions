@@ -5,12 +5,60 @@ import { join } from "node:path";
 import test from "node:test";
 import registerInterruptSteer from "./interrupt-steer.ts";
 
+async function withFakeClock(run) {
+	const originalSetTimeout = globalThis.setTimeout;
+	const originalClearTimeout = globalThis.clearTimeout;
+	const originalNow = Date.now;
+	let now = 0;
+	let nextId = 0;
+	const pending = new Map();
+
+	globalThis.setTimeout = (callback, delay = 0) => {
+		const id = ++nextId;
+		pending.set(id, { at: now + Number(delay), callback });
+		return id;
+	};
+	globalThis.clearTimeout = (id) => pending.delete(id);
+	Date.now = () => now;
+
+	const flushMicrotasks = async () => {
+		for (let i = 0; i < 5; i++) await Promise.resolve();
+	};
+	const advanceBy = async (duration) => {
+		const target = now + duration;
+		while (true) {
+			let next;
+			for (const [id, timer] of pending) {
+				if (timer.at <= target && (!next || timer.at < next.timer.at)) next = { id, timer };
+			}
+			if (!next) break;
+			now = next.timer.at;
+			pending.delete(next.id);
+			next.timer.callback();
+			await flushMicrotasks();
+		}
+		now = target;
+		await flushMicrotasks();
+	};
+
+	try {
+		await run({ advanceBy });
+	} finally {
+		globalThis.setTimeout = originalSetTimeout;
+		globalThis.clearTimeout = originalClearTimeout;
+		Date.now = originalNow;
+	}
+}
+
 function createHarness({
 	editorText = "",
 	idle = false,
 	steering = [],
 	followUp = [],
 	sendError,
+	preflightFailure = false,
+	acceptanceText,
+	handledPrompt = false,
 	acceptanceDelayMs = 0,
 	busyPollsAfterAbort = 2,
 	neverIdle = false,
@@ -29,20 +77,26 @@ function createHarness({
 			shortcuts.set(key, options);
 		},
 		on(event, handler) {
-			events.set(event, handler);
+			let handlers = events.get(event);
+			if (!handlers) events.set(event, handlers = new Set());
+			handlers.add(handler);
+			return () => handlers.delete(handler);
 		},
 		sendUserMessage(content, options) {
 			calls.push("sendUserMessage");
 			const send = async () => {
 				await new Promise((resolve) => setTimeout(resolve, acceptanceDelayMs));
+				if (preflightFailure) throw new Error("model preflight failed");
 				if (sendError) throw sendError;
-				sent.push({ content, options });
+				if (handledPrompt) return;
+				const acceptedText = acceptanceText ?? content;
+				sent.push({ content: acceptedText, options });
 				calls.push("message_start");
-				events.get("message_start")?.({
+				for (const handler of events.get("message_start") ?? []) handler({
 					type: "message_start",
 					message: {
 						role: "user",
-						content: [{ type: "text", text: content }],
+						content: [{ type: "text", text: acceptedText }],
 						timestamp: Date.now(),
 					},
 				}, ctx);
@@ -99,6 +153,9 @@ function createHarness({
 		notifications,
 		sent,
 		shortcuts,
+		emit(event, data) {
+			for (const handler of events.get(event) ?? []) handler(data, ctx);
+		},
 	};
 }
 
@@ -221,36 +278,170 @@ test("queued messages are sent when the editor is empty", async () => {
 });
 
 test("idle shortcut keeps text when Pi fails asynchronously before accepting it", async () => {
-	const harness = createHarness({
-		editorText: "keep this prompt",
-		idle: true,
-		sendError: new Error("send failed"),
+	await withFakeClock(async ({ advanceBy }) => {
+		const harness = createHarness({
+			editorText: "keep this prompt",
+			idle: true,
+			sendError: new Error("send failed"),
+		});
+		registerInterruptSteer(harness.pi);
+
+		const pending = harness.shortcuts.get("ctrl+alt+enter").handler(harness.ctx);
+		await advanceBy(60_000);
+		await pending;
+
+		assert.deepEqual(harness.sent, []);
+		assert.equal(harness.editorText, "keep this prompt");
+		assert.equal(harness.notifications.length, 1);
+		assert.equal(harness.notifications[0].level, "warning");
 	});
-	registerInterruptSteer(harness.pi);
-
-	await harness.shortcuts.get("ctrl+alt+enter").handler(harness.ctx);
-
-	assert.deepEqual(harness.sent, []);
-	assert.equal(harness.editorText, "keep this prompt");
-	assert.equal(harness.notifications.length, 1);
-	assert.equal(harness.notifications[0].level, "warning");
 });
 
 test("post-abort shortcut keeps Pi-restored text when Pi fails asynchronously before accepting it", async () => {
-	const harness = createHarness({
-		editorText: "keep this prompt",
-		steering: ["queued steering"],
-		followUp: ["queued follow-up"],
-		sendError: new Error("send failed"),
+	await withFakeClock(async ({ advanceBy }) => {
+		const harness = createHarness({
+			editorText: "keep this prompt",
+			steering: ["queued steering"],
+			followUp: ["queued follow-up"],
+			sendError: new Error("send failed"),
+		});
+		registerInterruptSteer(harness.pi);
+
+		const pending = harness.shortcuts.get("ctrl+alt+enter").handler(harness.ctx);
+		await advanceBy(120_000);
+		await pending;
+
+		assert.deepEqual(harness.sent, []);
+		assert.equal(harness.editorText, "queued steering\n\nqueued follow-up\n\nkeep this prompt");
+		assert.equal(harness.notifications.length, 1);
+		assert.equal(harness.notifications[0].level, "warning");
 	});
-	registerInterruptSteer(harness.pi);
+});
 
-	await harness.shortcuts.get("ctrl+alt+enter").handler(harness.ctx);
+test("a transformed prompt is accepted when Pi starts a user message", async () => {
+	await withFakeClock(async ({ advanceBy }) => {
+		const harness = createHarness({
+			editorText: "original prompt",
+			idle: true,
+			acceptanceText: "transformed prompt",
+		});
+		registerInterruptSteer(harness.pi);
+		const shortcut = harness.shortcuts.get("ctrl+alt+enter");
 
-	assert.deepEqual(harness.sent, []);
-	assert.equal(harness.editorText, "queued steering\n\nqueued follow-up\n\nkeep this prompt");
-	assert.equal(harness.notifications.length, 1);
-	assert.equal(harness.notifications[0].level, "warning");
+		const pending = shortcut.handler(harness.ctx);
+		await advanceBy(0);
+		const accepted = harness.editorText === "";
+		if (!accepted) await advanceBy(60_000);
+		await pending;
+
+		assert.deepEqual(harness.sent, [{ content: "transformed prompt", options: undefined }]);
+		assert.equal(accepted, true);
+		assert.deepEqual(harness.notifications, []);
+
+		await shortcut.handler(harness.ctx);
+		assert.deepEqual(harness.notifications, [{
+			message: "pi-interrupt-steer: nothing to send",
+			level: "info",
+		}]);
+	});
+});
+
+test("a handled prompt without message_start keeps the editor text until the acceptance timeout", async () => {
+	await withFakeClock(async ({ advanceBy }) => {
+		const harness = createHarness({ editorText: "handled prompt", idle: true, handledPrompt: true });
+		registerInterruptSteer(harness.pi);
+		let finished = false;
+		const pending = harness.shortcuts.get("ctrl+alt+enter").handler(harness.ctx).then(() => { finished = true; });
+
+		await advanceBy(0);
+		await advanceBy(59_999);
+		const waitedForFullTimeout = !finished;
+		if (waitedForFullTimeout) await advanceBy(1);
+		await pending;
+
+		assert.equal(waitedForFullTimeout, true);
+		assert.deepEqual(harness.sent, []);
+		assert.equal(harness.editorText, "handled prompt");
+		assert.match(harness.notifications[0].message, /has not started the message yet.*text was kept.*check the transcript before sending it again/i);
+	});
+});
+
+test("a user message accepted after five seconds still clears the submitted text", async () => {
+	await withFakeClock(async ({ advanceBy }) => {
+		const harness = createHarness({ editorText: "late prompt", idle: true, acceptanceDelayMs: 6_000 });
+		registerInterruptSteer(harness.pi);
+
+		const pending = harness.shortcuts.get("ctrl+alt+enter").handler(harness.ctx);
+		await advanceBy(6_000);
+		await pending;
+
+		assert.deepEqual(harness.sent, [{ content: "late prompt", options: undefined }]);
+		assert.equal(harness.editorText, "");
+		assert.deepEqual(harness.notifications, []);
+	});
+});
+
+test("a second press while Pi is accepting a prompt does not send it again", async () => {
+	await withFakeClock(async ({ advanceBy }) => {
+		const harness = createHarness({ editorText: "send once", idle: true, acceptanceDelayMs: 100 });
+		registerInterruptSteer(harness.pi);
+		const shortcut = harness.shortcuts.get("ctrl+alt+enter");
+
+		const first = shortcut.handler(harness.ctx);
+		const second = shortcut.handler(harness.ctx);
+		await advanceBy(100);
+		await Promise.all([first, second]);
+
+		assert.equal(harness.calls.filter((call) => call === "sendUserMessage").length, 1);
+		assert.equal(harness.editorText, "");
+		assert.equal(harness.notifications.length, 1);
+		assert.equal(harness.notifications[0].level, "info");
+	});
+});
+
+test("a second press while waiting for the aborted run to become idle does not abort again", async () => {
+	await withFakeClock(async ({ advanceBy }) => {
+		const harness = createHarness({ editorText: "send once", acceptanceDelayMs: 0 });
+		registerInterruptSteer(harness.pi);
+		const shortcut = harness.shortcuts.get("ctrl+alt+enter");
+
+		const first = shortcut.handler(harness.ctx);
+		const second = shortcut.handler(harness.ctx);
+		await advanceBy(100);
+		await Promise.all([first, second]);
+
+		assert.equal(harness.calls.filter((call) => call === "abort").length, 1);
+		assert.equal(harness.calls.filter((call) => call === "sendUserMessage").length, 1);
+		assert.equal(harness.editorText, "");
+		assert.equal(harness.notifications.length, 1);
+		assert.equal(harness.notifications[0].level, "info");
+	});
+});
+
+test("a preflight failure keeps the editor text and releases the guard after timeout", async () => {
+	await withFakeClock(async ({ advanceBy }) => {
+		const harness = createHarness({ editorText: "keep after preflight failure", idle: true, preflightFailure: true });
+		registerInterruptSteer(harness.pi);
+		const shortcut = harness.shortcuts.get("ctrl+alt+enter");
+		let finished = false;
+		const pending = shortcut.handler(harness.ctx).then(() => { finished = true; });
+
+		await advanceBy(0);
+		await advanceBy(59_999);
+		const waitedForFullTimeout = !finished;
+		if (waitedForFullTimeout) await advanceBy(1);
+		await pending;
+
+		assert.equal(waitedForFullTimeout, true);
+		assert.deepEqual(harness.sent, []);
+		assert.equal(harness.editorText, "keep after preflight failure");
+		assert.match(harness.notifications[0].message, /has not started the message yet.*text was kept.*check the transcript before sending it again/i);
+
+		const retry = shortcut.handler(harness.ctx);
+		assert.equal(harness.calls.filter((call) => call === "sendUserMessage").length, 2);
+		await advanceBy(60_000);
+		await retry;
+	});
 });
 
 test("valid key setting replaces the default shortcut", () => {
@@ -293,9 +484,8 @@ test("invalid key setting uses the default shortcut and warns once", () => {
 
 		assert.equal(harness.shortcuts.has("ctrl+alt+enter"), true);
 		assert.equal(harness.shortcuts.has("not-a-key"), false);
-		const onSessionStart = harness.events.get("session_start");
-		onSessionStart({}, harness.ctx);
-		onSessionStart({}, harness.ctx);
+		harness.emit("session_start", {});
+		harness.emit("session_start", {});
 		assert.equal(harness.notifications.length, 1);
 		assert.equal(harness.notifications[0].level, "warning");
 	} finally {
