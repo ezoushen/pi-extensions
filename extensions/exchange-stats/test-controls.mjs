@@ -63,6 +63,30 @@ test("latest process and exchange shortcuts toggle the intended fold states with
  } finally { m.close(); }
 });
 
+test("the latest exchange shortcut toggles settled progress and leaves streaming text visible", () => {
+ const m = mount();
+ const content = [
+  { type: "thinking", thinking: "Inspecting the change." },
+  { type: "text", text: "The first note." },
+  toolItem("settled-progress"),
+  { type: "text", text: "The final answer." },
+ ];
+ try {
+  m.handlers.get("before_agent_start")({}, m.ctx);
+  feed(m, 15, content);
+  const assistant = new AssistantMessageComponent();
+  assistant.updateContent(snapshot(15, content), false);
+  assert.doesNotMatch(assistant.render(80).join("\n"), /Worked for/);
+  assert.match(assistant.render(80).join("\n"), /The first note/);
+  m.handlers.get("agent_settled")({}, m.ctx);
+  assert.match(assistant.render(80).join("\n"), /▸ Worked for/);
+  assert.doesNotMatch(assistant.render(80).join("\n"), /The first note/);
+  assert.match(assistant.render(80).join("\n"), /The final answer/);
+  m.shortcuts.get("ctrl+alt+e")(m.ctx);
+  assert.match(assistant.render(80).join("\n"), /▾ Worked for/);
+ } finally { m.close(); }
+});
+
 test("picker toggles one older tool block and renders dim rows with an undimmed cursor", async () => {
  const m = mount();
  try {
