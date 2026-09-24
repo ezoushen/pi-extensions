@@ -2,7 +2,7 @@ import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/
 import type { ToolFoldModel } from "./tool-fold.ts";
 import { fitThinkingLine } from "./thinking-width.ts";
 
-type Theme = { fg(color: "dim", text: string): string; bg(color: "customMessageBg", text: string): string };
+type Theme = { fg(color: "dim", text: string): string; italic?(text: string): string; bg(color: "customMessageBg", text: string): string };
 
 interface Item {
 	label: string;
@@ -57,13 +57,18 @@ export class FoldPicker {
 			const clipped = truncateToWidth(content, width, "…");
 			return theme.bg("customMessageBg", clipped) + theme.bg("customMessageBg", " ".repeat(Math.max(0, width - visibleWidth(clipped))));
 		};
+		const styleText = (content: string, availableWidth = width) => {
+			const clipped = truncateToWidth(content, availableWidth, "…");
+			const colored = theme.fg("dim", clipped);
+			return theme.italic?.(colored) ?? colored;
+		};
 		const border = fit(theme.fg("dim", "─".repeat(width)));
-		const lines = [border, fit(theme.fg("dim", "Fold exchange / process / block"))];
-		if (!rows.length) return [...lines, fit(theme.fg("dim", "  No blocks yet")), border];
+		const lines = [border, fit(styleText("Fold exchange / process / block"))];
+		if (!rows.length) return [...lines, fit(styleText("  No blocks yet")), border];
 		this.selected = Math.min(this.selected, rows.length - 1);
 		return [...lines, ...rows.map((row, index) => {
 			const mark = index === this.selected ? ">" : " ";
-			return fit(mark + theme.fg("dim", fitThinkingLine(` ${row.label}`, Math.max(0, width - 1))));
+			return fit(mark + styleText(fitThinkingLine(` ${row.label}`, Math.max(0, width - 1)), Math.max(0, width - 1)));
 		}), border];
 	}
 

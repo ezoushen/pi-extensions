@@ -195,3 +195,20 @@ test("an exchange renders with only Pi-provided events and context", () => {
 	}
 	assert.match(mounted.statuses.at(-1).value, /out 7/);
 });
+
+test("exchange card text rows use the theme's italic styling with their gray color", () => {
+	const mounted = mount();
+	const theme = {
+		bg: (_name, value) => value,
+		fg: (_name, value) => `\x1b[38;5;1m${value}\x1b[39m`,
+		italic: (value) => `\x1b[3m${value}\x1b[23m`,
+		bold: (value) => value,
+	};
+	const lines = mounted.renderer()({ type: "custom", customType: "exchange-stats", data: record010 }, { expanded: false }, theme)
+		.render(100).filter((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trim());
+	assert.equal(lines.length, 3);
+	for (const line of lines) {
+		assert.match(line, /\x1b\[38;5;1m/);
+		assert.match(line, /\x1b\[3m/);
+	}
+});

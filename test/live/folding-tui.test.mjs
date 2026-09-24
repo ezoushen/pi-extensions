@@ -64,8 +64,10 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 	const timeZone = "Asia/Taipei";
 	const agentDir = mkdtempSync(join(tmpdir(), "pi-fold-tui-"));
 	const tarDir = mkdtempSync(join(tmpdir(), "pi-fold-pack-"));
+	const evidencePath = process.env.PI_EXCHANGE_STATS_EVIDENCE_PATH;
 	let stub;
 	let child;
+	let ansiCapture = "";
 	const terminal = new Terminal({ cols: 110, rows: 48, scrollback: 1000, allowProposedApi: true });
 	try {
 		const firstPath = join(agentDir, "first.txt");
@@ -107,7 +109,10 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 			"--no-context-files", "--no-skills", "--no-prompt-templates", "--no-themes", "--offline"], {
 			cwd: agentDir, env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, TERM: "xterm-256color", TZ: timeZone }, stdio: ["pipe", "pipe", "pipe"],
 		});
-		child.stdout.on("data", (data) => terminal.write(data));
+		child.stdout.on("data", (data) => {
+			if (evidencePath) ansiCapture += data.toString("utf8");
+			terminal.write(data);
+		});
 		let errors = "";
 		child.stderr.on("data", (data) => { errors += data; });
 		await waitForScreen(terminal, (value) => value.includes("⏱ ready") && value.includes("free-model"), child);
@@ -128,10 +133,10 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		// PTY redraw can cross a second boundary after the exchange has settled.
 		const expectedTimes = [0, 1_000].map((delta) => expectedFinishLabel(capturedAt - delta, capturedAt, timeZone));
 		assert.ok(expectedTimes.some((value) => exchangeHeadline.includes(value)), "exchange finish time did not match the local clock: " + exchangeHeadline);
-		const evidencePath = process.env.PI_EXCHANGE_STATS_EVIDENCE_PATH;
 		if (evidencePath) {
 			mkdirSync(dirname(evidencePath), { recursive: true });
-			writeFileSync(evidencePath, settled + "\n");
+			writeFileSync(evidencePath, ansiCapture);
+			assert.match(ansiCapture, /\x1b\[3m/, "live ANSI capture does not include italic styling");
 		}
 		assert.doesNotMatch(settled, /FIRST_NATIVE_OUTPUT|SECOND_NATIVE_OUTPUT/);
 		assert.doesNotMatch(settled, /Turn 1|Turn 2/);

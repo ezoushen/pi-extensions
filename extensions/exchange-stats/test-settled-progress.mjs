@@ -197,15 +197,18 @@ test("the progress row supports click, hover, cursor selection, and narrow width
 	const theme = () => ({
 		fg(color, text) { return `${color === "accent" ? "\x1b[31m" : color === "muted" ? "\x1b[33m" : "\x1b[2m"}${text}\x1b[0m`; },
 		bg(_color, text) { return `\x1b[48;5;24m${text}\x1b[0m`; },
+		italic(text) { return `\x1b[3m${text}\x1b[23m`; },
 	});
 	const patch = installThinkingFold(AssistantMessageComponent, model, theme);
 	try {
 		const component = new AssistantMessageComponent();
 		component.updateContent(message(source.timestamp, source.content.map((part) => ({ ...part }))), false);
 		const region = component.contentContainer.children.find((child) => child.constructor.name === "MouseRegion");
+		assert.match(component.render(18).join("\n"), /\x1b\[2m.*\x1b\[3m|\x1b\[3m.*\x1b\[2m/);
 		assert.ok(model.startCursor());
 		assert.equal(model.cursorTitle(), model.progressLine(1));
 		assert.match(component.render(18).join("\n"), /\x1b\[31m.*Worked/);
+		assert.match(component.render(18).join("\n"), /\x1b\[3m/);
 		model.cursorToggle();
 		assert.match(model.progressLine(1), /^▾/);
 		model.cursorToggle();
@@ -213,6 +216,8 @@ test("the progress row supports click, hover, cursor selection, and narrow width
 		const hover = region.handleMouse({ type: "move", button: "", y: 0, width: 18, height: 1 });
 		assert.equal(hover?.handled, true);
 		assert.match(component.render(18).join("\n"), /\x1b\[48;5;24m/);
+		assert.match(component.render(18).join("\n"), /\x1b\[33m/);
+		assert.match(component.render(18).join("\n"), /\x1b\[3m/);
 		const click = region.handleMouse({ type: "click", button: "left", y: 0, width: 18, height: 1 });
 		assert.equal(click?.handled, true);
 		assert.match(model.progressLine(1), /^▾/);
@@ -241,4 +246,23 @@ test("the progress control works when interim assistant text is its first item",
 		const firstText = expanded.findIndex((line, index) => index > progressRow && line.includes("I will inspect the file."));
 		assert.equal(firstText - progressRow - 1, 1, JSON.stringify(expanded));
 	} finally { patch.restore(); }
+});
+
+test("picker text rows are italic while its border stays upright", () => {
+	const model = new ToolFoldModel(() => 1000);
+	model.beginExchange(1);
+	model.ingest(message(501, [{ type: "thinking", thinking: "Inspecting files." }, { type: "text", text: "Answer" }]));
+	model.endExchange();
+	const theme = {
+		fg(_color, text) { return `\x1b[38;5;1m${text}\x1b[39m`; },
+		italic(text) { return `\x1b[3m${text}\x1b[23m`; },
+		bg(_color, text) { return text; },
+	};
+	const picker = new FoldPicker(model, () => theme, () => {}, () => {});
+	const rows = picker.render(80);
+	assert.doesNotMatch(rows[0], /\x1b\[3m/);
+	assert.match(rows[1], /\x1b\[38;5;1m/);
+	assert.match(rows[1], /\x1b\[3m/);
+	assert.ok(rows.slice(2, -1).every((row) => /\x1b\[3m/.test(row)));
+	assert.doesNotMatch(rows.at(-1), /\x1b\[3m/);
 });
