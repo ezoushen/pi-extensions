@@ -133,11 +133,6 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		// PTY redraw can cross a second boundary after the exchange has settled.
 		const expectedTimes = [0, 1_000].map((delta) => expectedFinishLabel(capturedAt - delta, capturedAt, timeZone));
 		assert.ok(expectedTimes.some((value) => exchangeHeadline.includes(value)), "exchange finish time did not match the local clock: " + exchangeHeadline);
-		if (evidencePath) {
-			mkdirSync(dirname(evidencePath), { recursive: true });
-			writeFileSync(evidencePath, ansiCapture);
-			assert.match(ansiCapture, /\x1b\[3m/, "live ANSI capture does not include italic styling");
-		}
 		assert.doesNotMatch(settled, /FIRST_NATIVE_OUTPUT|SECOND_NATIVE_OUTPUT/);
 		assert.doesNotMatch(settled, /Turn 1|Turn 2/);
 
@@ -147,6 +142,9 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		send(child, "\x1b\x06");
 		const levelTwo = await waitForScreen(terminal, (value) => value.includes("first.txt") && value.includes("second.txt"), child);
 		assert.match(levelTwo, /◈/);
+		assert.match(levelTwo, /├/);
+		assert.match(levelTwo, /└/);
+		assert.match(levelTwo, /│/);
 		assert.doesNotMatch(levelTwo, /FIRST_NATIVE_OUTPUT|SECOND_NATIVE_OUTPUT/);
 		send(child, "\x1b\x13");
 		await waitForScreen(terminal, (value) => value.includes("Fold exchange / process / block"), child);
@@ -160,6 +158,14 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		assert.match(opened, /I will read both files/);
 		assert.match(opened, /Both file contents are available/);
 		assert.match(opened, /Exchange 1/);
+		assert.match(opened, /├/);
+		assert.match(opened, /└/);
+		assert.match(opened, /│/);
+		if (evidencePath) {
+			mkdirSync(dirname(evidencePath), { recursive: true });
+			writeFileSync(evidencePath, opened + "\n");
+			assert.match(ansiCapture, /\x1b\[3m/, "live ANSI capture does not include italic styling");
+		}
 		assert.ok(!errors, errors);
 	} finally {
 		if (child && child.exitCode === null) {

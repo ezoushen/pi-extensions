@@ -75,12 +75,15 @@ type ThinkingOwner = { model: ToolFoldModel; getTheme: () => TitleTheme | undefi
 const toolOwners = new WeakMap<object, { add: (owner: ToolOwner) => Patch }>();
 const thinkingOwners = new WeakMap<object, { add: (owner: ThinkingOwner) => Patch }>();
 
-/** Columns a block title sits right of its process line, and its opened output right of the title. */
+/** Two columns per open layer; tree guides replace them without moving native Pi output. */
 const BLOCK_INDENT = 2;
 
-function indented(lines: string[], columns: number): string[] {
-	const prefix = " ".repeat(columns);
-	return lines.map((line) => prefix + line);
+/** Aligns each dim tree guide with its parent control within the two-column layer gutter. */
+function withGuide(theme: TitleTheme | undefined, prefix: string, lines: string[]): string[] {
+	if (!prefix) return lines;
+	const aligned = prefix.replace(/([│├└]) /g, " $1");
+	const guide = theme?.fg("dim", aligned) ?? aligned;
+	return lines.map((line) => guide + line);
 }
 
 function truncateProcessLine(text: string, width: number): string {
@@ -142,15 +145,17 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 		try {
 			const { model, getTheme, getOutputPad, getHomeDirectory } = ownerFor(this);
 			model.observe(this.toolCallId, this.toolName, this.args, this.result);
+			const key = `tool:${this.toolCallId}`;
 			const process = model.processForTool(this.toolCallId);
-			const processLead = process && model.isProcessLead(process.id, `tool:${this.toolCallId}`);
-			const progress = model.progressForItem(`tool:${this.toolCallId}`);
+			const processLead = process && model.isProcessLead(process.id, key);
+			const progress = model.progressForItem(key);
+			const progressGuide = model.progressGuideForItem(key);
+			const processGuide = model.processBlockGuide(key);
 			const gapBefore = model.hasTextImmediatelyBefore(`tool:${this.toolCallId}`) && (processLead || progress?.lead);
 			const padding = Math.min(getOutputPad(), Math.max(0, Math.floor((width - 1) / 2)));
 			const progressLine = progress?.lead ? progressRow(model, progress.exchange, getTheme(), padding, width) : [];
-			const withGap = (rows: string[]) => gapBefore && rows.length ? ["", ...rows] : rows;
+			const withGap = (rows: string[]) => gapBefore && rows.length ? [...withGuide(getTheme(), progressGuide ? "│ " : "", [""]), ...rows] : rows;
 			if (progress && !progress.open) return withGap(progressLine);
-			const show = (rows: string[]) => progress ? [...progressLine, ...(progressLine.length && rows.length ? [""] : []), ...indented(rows, BLOCK_INDENT)] : rows;
 			if (process && !model.isProcessOpen(process.id) && !model.isProcessLead(process.id, `tool:${this.toolCallId}`)) return [];
 			const contentWidth = width - padding * 2 - (progress ? BLOCK_INDENT : 0);
 			const processText = process && model.isProcessLead(process.id, `tool:${this.toolCallId}`)
@@ -158,11 +163,12 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 			const processKey = `process:${process?.id}`;
 			const processLine = processText === undefined ? []
 				: hoverRows(getTheme(), model, processKey, new Text(styleControl(getTheme(), model, processKey, processText), padding, 0).render(width - (progress ? BLOCK_INDENT : 0)), padding);
-			if (process && !model.isProcessOpen(process.id)) return withGap(show(processLine));
+			const processRows = progressGuide && processLead ? withGuide(getTheme(), progressGuide.branch, processLine) : processLine;
+			if (process && !model.isProcessOpen(process.id)) return withGap([...progressLine, ...(progressLine.length && processRows.length ? withGuide(getTheme(), progressGuide?.continuation ?? "", [""]) : []), ...processRows]);
 			const parts = model.titleParts(this.toolCallId);
 			if (!parts || width <= 0) return original.call(this, width);
 			// Inside a process, titles step in under the process line and opened output steps in under its title.
-			const indent = process && width > padding * 2 + BLOCK_INDENT * 2 ? BLOCK_INDENT : 0;
+			const indent = process ? BLOCK_INDENT : 0;
 			const titleWidth = contentWidth - indent;
 			const name = truncateToWidth(`⚙ ${parts.name}`, titleWidth, "");
 			const remaining = titleWidth - visibleWidth(name);
@@ -176,10 +182,15 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 				: "";
 			const text = name + argument + stats;
 			const styled = styleControl(getTheme(), model, `tool:${this.toolCallId}`, text);
-			const title = hoverRows(getTheme(), model, `tool:${this.toolCallId}`, indented(new Text(styled, padding, 0).render(width - indent - (progress ? BLOCK_INDENT : 0)), indent), indent + padding + (progress ? BLOCK_INDENT : 0));
-			if (!model.isOpen(this.toolCallId)) return withGap(show([...processLine, ...title]));
+			const titleRows = hoverRows(getTheme(), model, `tool:${this.toolCallId}`, new Text(styled, padding, 0).render(width - indent - (progress ? BLOCK_INDENT : 0)), padding);
+			const titlePrefix = (progressGuide?.continuation ?? "") + (process ? processGuide?.branch ?? "  " : "");
+			const title = withGuide(getTheme(), titlePrefix, titleRows);
+			const rows = [...processRows, ...title];
+			if (!model.isOpen(this.toolCallId)) return withGap([...progressLine, ...(progressLine.length && rows.length ? withGuide(getTheme(), progressGuide?.continuation ?? "", [""]) : []), ...rows]);
 			nativeOffset.set(this, { rows: processLine.length + title.length, columns: indent * 2 });
-			return withGap(show([...processLine, ...title, ...indented(original.call(this, width - indent * 2 - (progress ? BLOCK_INDENT : 0)), indent * 2)]));
+			const bodyPrefix = (progressGuide?.continuation ?? "") + (process ? processGuide?.continuation ?? "  " : "") + (indent ? " ".repeat(BLOCK_INDENT) : "");
+			const body = withGuide(getTheme(), bodyPrefix, original.call(this, width - indent * 2 - (progress ? BLOCK_INDENT : 0)));
+			return withGap([...progressLine, ...(progressLine.length && rows.length ? withGuide(getTheme(), progressGuide?.continuation ?? "", [""]) : []), ...rows, ...body]);
 		} catch {
 			return original.call(this, width);
 		}
@@ -340,6 +351,8 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 		}
 		const children = this.contentContainer.children;
 		textControls.set(this, []);
+		const childKeys = new Map<object, string>();
+		const processByKey = new Map<string, { id: string }>();
 		const regions = children.map((child, index) => child.constructor.name === "MouseRegion" ? index : -1).filter((index) => index >= 0);
 		const texts = message.content.flatMap((part, index) => part.type === "text" && part.text?.trim() ? [index] : []);
 		const markdown = children.map((child, index) => child.constructor.name === "Markdown" ? index : -1).filter((index) => index >= 0);
@@ -356,9 +369,12 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 				const progress = model.progressForItem(key);
 				if (!progress) return originalRender(width);
 				const line = progress.lead ? progressRow(model, progress.exchange, getTheme(), component.outputPad, width) : [];
-				const rows = indented(originalRender(width - BLOCK_INDENT), BLOCK_INDENT);
-				return progress.open ? [...line, ...(line.length && rows.length ? [""] : []), ...rows] : line;
+				const guide = model.progressGuideForItem(key);
+				const continuation = guide?.continuation ?? "  ";
+				const rows = progress.open ? withGuide(getTheme(), continuation, originalRender(width - BLOCK_INDENT)) : [];
+				return progress.open ? [...line, ...(line.length && rows.length ? withGuide(getTheme(), continuation, [""]) : []), ...rows] : line;
 			};
+			childKeys.set(native, key);
 			const controls = textControls.get(this) ?? [];
 			controls.push({ child: native, key });
 			textControls.set(this, controls);
@@ -367,6 +383,9 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 			...texts.map((index) => `text:${message.timestamp}:${index}`),
 			...runs.map((run) => `thinking:${message.timestamp}:${run.index}`),
 		];
+		const firstContentKey = [...texts.map((index) => ({ index, key: `text:${message.timestamp}:${index}` })),
+			...runs.map((run) => ({ index: run.index, key: `thinking:${message.timestamp}:${run.index}` }))]
+			.sort((left, right) => left.index - right.index)[0]?.key;
 		const messageProgress = () => progressKeys.map((key) => model.progressForItem(key)).find(Boolean);
 		const hasProgressLead = () => progressKeys.some((key) => model.progressForItem(key)?.lead);
 		const hasFinalText = () => texts.some((index) => !model.progressForItem(`text:${message.timestamp}:${index}`));
@@ -377,6 +396,11 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 				render(width: number) {
 					const progress = messageProgress();
 					if (progress && !progress.open && !hasProgressLead() && !hasFinalText()) return [];
+					const prefix = (!progress || progress.open) && firstContentKey ? model.guideBeforeItem(firstContentKey) : undefined;
+					if (prefix) {
+						const lines = initialSpacer.render(width - visibleWidth(prefix));
+						return withGuide(getTheme(), prefix, lines);
+					}
 					return initialSpacer.render(width);
 				},
 			};
@@ -384,8 +408,9 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 		runs.forEach((run, runIndex) => {
 			const native = children[regions[runIndex]];
 			const process = model.processForThinking(message, run.index);
-			const lead = process && model.isProcessLead(process.id, `thinking:${message.timestamp}:${run.index}`);
 			const key = `thinking:${message.timestamp}:${run.index}`;
+			if (process) processByKey.set(key, process);
+			const lead = process && model.isProcessLead(process.id, key);
 			const gapBefore = model.hasTextImmediatelyBefore(key) && (lead || model.progressForItem(key)?.lead);
 			const preceding = children[regions[runIndex] - 1];
 			if (process && !lead && preceding?.constructor.name === "Spacer") {
@@ -437,7 +462,9 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 				render(width: number) {
 					const current = model.progressForItem(key);
 					const progressLine = current?.lead ? progressRow(model, current.exchange, getTheme(), component.outputPad, width) : [];
-					const withGap = (rows: string[]) => gapBefore && rows.length ? ["", ...rows] : rows;
+					const progressGuide = current?.open ? model.progressGuideForItem(key) : undefined;
+					const processGuide = process ? model.processBlockGuide(key) : undefined;
+					const withGap = (rows: string[]) => gapBefore && rows.length ? [...withGuide(getTheme(), progressGuide ? "│ " : "", [""]), ...rows] : rows;
 					if (current && !current.open) return withGap(progressLine);
 					if (process && !model.isProcessOpen(process.id) && !lead) return [];
 					const innerWidth = width - (current ? BLOCK_INDENT : 0);
@@ -445,20 +472,62 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 					const processText = lead ? truncateProcessLine(model.processLine(process!.id), innerWidth - padding * 2) : undefined;
 					const processLine = processText === undefined ? []
 						: hoverRows(getTheme(), model, `process:${process!.id}`, new Text(styleControl(getTheme(), model, `process:${process!.id}`, processText), component.outputPad, 0).render(innerWidth), component.outputPad);
-					const show = (rows: string[]) => current ? [...progressLine, ...(progressLine.length && rows.length ? [""] : []), ...indented(rows, BLOCK_INDENT)] : rows;
-					if (process && !model.isProcessOpen(process.id)) return withGap(show(processLine));
-					const indent = process && width > padding * 2 + BLOCK_INDENT * 2 ? BLOCK_INDENT : 0;
+					const processRows = progressGuide && lead ? withGuide(getTheme(), progressGuide.branch, processLine) : processLine;
+					if (process && !model.isProcessOpen(process.id)) {
+						const gap = progressLine.length && processRows.length ? withGuide(getTheme(), progressGuide?.continuation ?? "", [""]) : [];
+						return withGap([...progressLine, ...gap, ...processRows]);
+					}
+					const indent = process ? BLOCK_INDENT : 0;
 					const title = fitThinkingLine(model.thinkingTitle(message, run.index, run.trace, component.isStreaming), innerWidth - indent - padding * 2);
 					const styled = styleControl(getTheme(), model, `thinking:${message.timestamp}:${run.index}`, title);
-					const body = model.isThinkingOpen(message, run.index) ? indented((native as MouseRegion).child.render(innerWidth - indent * 2), indent * 2) : [];
-					const titleRows = hoverRows(getTheme(), model, `thinking:${message.timestamp}:${run.index}`,
-						indented(new Text(styled, component.outputPad, 0).render(innerWidth - indent), indent), indent + component.outputPad);
-					return withGap(show([...processLine, ...titleRows, ...body]));
+					const titlePrefix = (progressGuide?.continuation ?? "") + (process ? processGuide?.branch ?? "  " : "");
+					const titleRows = withGuide(getTheme(), titlePrefix, hoverRows(getTheme(), model, key,
+						new Text(styled, component.outputPad, 0).render(innerWidth - indent), component.outputPad));
+					const bodyPrefix = (progressGuide?.continuation ?? "") + (process ? processGuide?.continuation ?? "  " : "") + (indent ? " ".repeat(BLOCK_INDENT) : "");
+					const body = model.isThinkingOpen(message, run.index)
+						? withGuide(getTheme(), bodyPrefix, (native as MouseRegion).child.render(innerWidth - indent * 2)) : [];
+					const rows = [...processRows, ...titleRows, ...body];
+					const gap = progressLine.length && rows.length ? withGuide(getTheme(), progressGuide?.continuation ?? "", [""]) : [];
+					return withGap([...progressLine, ...gap, ...rows]);
 				},
 				invalidate() {},
 			};
-			children[regions[runIndex]] = new MouseRegion(child, onMouse);
+			const region = new MouseRegion(child, onMouse);
+			children[regions[runIndex]] = region;
+			childKeys.set(region, key);
 		});
+		const continuationFor = (key: string) => {
+			const progressPrefix = model.progressGuideForItem(key)?.continuation ?? "";
+			const process = processByKey.get(key);
+			const blockPrefix = process && model.isProcessOpen(process.id) ? model.processBlockGuide(key)?.continuation ?? "" : "";
+			return progressPrefix + blockPrefix;
+		};
+		for (let index = 1; index < children.length; index++) {
+			const spacer = children[index];
+			if (spacer.constructor.name !== "Spacer") continue;
+			let key: string | undefined;
+			for (let previous = index - 1; previous >= 0; previous--) {
+				const sibling = children[previous];
+				key = childKeys.get(sibling);
+				if (key || sibling.constructor.name !== "Spacer") break;
+			}
+			if (!key) {
+				for (let next = index + 1; next < children.length; next++) {
+					const sibling = children[next];
+					key = childKeys.get(sibling);
+					if (key || sibling.constructor.name !== "Spacer") break;
+				}
+			}
+			if (!key) continue;
+			const originalRender = spacer.render.bind(spacer);
+			children[index] = {
+				constructor: spacer.constructor,
+				render(width: number) {
+					const prefix = continuationFor(key!);
+					return prefix ? withGuide(getTheme(), prefix, originalRender(Math.max(0, width - visibleWidth(prefix)))) : originalRender(width);
+				},
+			};
+		}
 	}
 
 	function folded(this: AssistantComponent, message: Message, isStreaming?: boolean): void {

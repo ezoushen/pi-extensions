@@ -54,7 +54,7 @@ test("real Pi components show one line per process, preserve text, and reopen L2
 		assert.equal((l2.match(/▾ ◈/g) ?? []).length, 1);
 		assert.match(l2, /⚙ bash.*pwd/);
 		assert.match(l2, /⚙ read.*one/);
-		const detail = lines().map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trim());
+		const detail = lines().map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trim().replace(/^(?:[│├└] )+/, "").trimStart());
 		const titles = detail.filter((line) => /^(⚙|◈ Thinking)/.test(line));
 		assert.deepEqual(titles.map((line) => line.startsWith("◈") ? "thinking" : line.split(/\s+/)[1]), ["bash", "read", "thinking", "bash"]);
 		ansi = "\x1b[38;2;120;120;120m";

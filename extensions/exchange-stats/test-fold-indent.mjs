@@ -50,7 +50,7 @@ test("opening a tool block keeps its title and indents the native output below i
 		const titleColumn = column(lines[titleAt], "⚙");
 		const body = lines.slice(titleAt + 1).filter((line) => plain(line).trim());
 		assert.ok(body.some((line) => plain(line).includes("nested-output")), "native output follows the title");
-		for (const line of body) assert.ok(plain(line).search(/\S/) >= titleColumn + 2, `native line is indented: ${JSON.stringify(plain(line))}`);
+		for (const line of body) assert.ok(plain(line).slice(2).search(/\S/) >= titleColumn, `native line is indented after its guide: ${JSON.stringify(plain(line))}`);
 	} finally { restore(); }
 });
 
@@ -64,7 +64,7 @@ test("opening a thinking block keeps its title and indents the native trace belo
 		const titleColumn = column(lines[titleAt], "◈");
 		const body = lines.slice(titleAt + 1).filter((line) => plain(line).trim());
 		assert.ok(body.some((line) => plain(line).includes("Checking the setup file.")), "native trace follows the title");
-		for (const line of body) assert.ok(plain(line).search(/\S/) >= titleColumn + 2, `native line is indented: ${JSON.stringify(plain(line))}`);
+		for (const line of body) assert.ok(plain(line).slice(2).search(/\S/) >= titleColumn, `native line is indented after its guide: ${JSON.stringify(plain(line))}`);
 	} finally { restore(); }
 });
 

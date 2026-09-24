@@ -325,6 +325,57 @@ export class ToolFoldModel {
 		const progress = this.progressByItem.get(key);
 		return progress && { exchange: progress.exchange, lead: progress.lead === key, open: progress.open };
 	}
+	/** Returns the settled progress branch for an item, grouping consecutive blocks by process. */
+	progressGuideForItem(key: string): { branch: "├ " | "└ "; continuation: "│ " | "  " } | undefined {
+		const progress = this.progressByItem.get(key);
+		if (!progress?.open) return undefined;
+		const parts = this.progressParts(progress.exchange);
+		if (!parts) return undefined;
+		const children: string[] = [];
+		let previousProcess: string | undefined;
+		for (const item of parts.items) {
+			if (item.kind === "text") {
+				children.push(item.key);
+				previousProcess = undefined;
+				continue;
+			}
+			const process = this.processByBlock.get(item.key);
+			const child = process?.id ?? item.key;
+			if (child !== previousProcess) children.push(child);
+			previousProcess = child;
+		}
+		const item = parts.items.find((candidate) => candidate.key === key);
+		const child = item?.kind === "text" ? item.key : item && this.processByBlock.get(item.key)?.id;
+		const index = child === undefined ? -1 : children.indexOf(child);
+		if (index < 0) return undefined;
+		const last = index === children.length - 1;
+		return last ? { branch: "└ ", continuation: "  " } : { branch: "├ ", continuation: "│ " };
+	}
+	/** Returns the branch for a block title and the continuation for its opened output. */
+	processBlockGuide(key: string): { branch: "├ " | "└ "; continuation: "│ " | "  " } | undefined {
+		const process = this.processByBlock.get(key);
+		const index = process?.blocks.findIndex((block) => block.key === key) ?? -1;
+		if (!process || index < 0) return undefined;
+		const last = index === process.blocks.length - 1;
+		return last ? { branch: "└ ", continuation: "  " } : { branch: "├ ", continuation: "│ " };
+	}
+	/** Returns the guide columns that continue into an item from its previous transcript item. */
+	guideBeforeItem(key: string): string | undefined {
+		const index = this.exchangeItems.findIndex((item) => item.key === key);
+		if (index <= 0) return undefined;
+		const current = this.exchangeItems[index];
+		const previous = this.exchangeItems[index - 1];
+		if (previous.exchange !== current.exchange) return undefined;
+		const progress = this.progressByItem.get(key);
+		const outer = progress?.open ? this.progressGuideForItem(previous.key)?.continuation ?? "" : "";
+		const previousProcess = previous.kind === "block" ? this.processByBlock.get(previous.key) : undefined;
+		const currentProcess = current.kind === "block" ? this.processByBlock.get(current.key) : undefined;
+		if (previousProcess && currentProcess?.id === previousProcess.id) {
+			if (!previousProcess.open) return undefined;
+			return outer + (this.processBlockGuide(previous.key)?.continuation ?? "");
+		}
+		return outer || undefined;
+	}
 	progressLine(exchange: number): string {
 		const progress = this.progress.get(exchange);
 		if (!progress) return "";

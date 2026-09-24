@@ -173,7 +173,7 @@ test("the hover bar runs from the title's indented start to the right edge, with
 		const line = lines[row];
 		const barStart = line.indexOf(BG_OPEN);
 		const glyph = plain(line).indexOf("⚙");
-		assert.equal(line.slice(0, barStart), " ".repeat(glyph), "indentation before the title stays unhighlighted");
+		assert.equal(plain(line.slice(0, barStart)), " └" + " ".repeat(glyph - 2), "the dim tree guide and padding stay outside the hover bar");
 		assert.ok(line.endsWith("\x1b[49m"), "the bar reaches the end of the row");
 		assert.equal(plain(line).length, 80, "the row fills the width exactly");
 		assert.match(line, /\x1b\[38;5;2m⚙/, "hovered text is brighter than dim");
