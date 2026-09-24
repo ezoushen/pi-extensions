@@ -134,7 +134,7 @@ interface ExchangeRecord extends TokenTotals {
 	/** Per-turn detail; always empty on a session card. */
 	turns: TurnRecord[];
 	startedAt: number;
-	endedAt: number;
+	endedAt?: number;
 	durationMs: number;
 	/** Wall time from the first process block to the trailing answer. */
 	progressDurationMs?: number;
@@ -162,6 +162,19 @@ function fmtDuration(ms: number): string {
 	const m = Math.floor(s / 60);
 	const rem = Math.round(s % 60);
 	return rem > 0 ? `${m}m${rem}s` : `${m}m`;
+}
+
+function fmtLocalFinishTime(at: number): string {
+	const date = new Date(at);
+	const time = new Intl.DateTimeFormat(undefined, {
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		hourCycle: "h23",
+	}).format(date);
+	const calendarDate = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "numeric", day: "numeric" });
+	if (calendarDate.format(date) === calendarDate.format(new Date(Date.now()))) return time;
+	return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date) + " " + time;
 }
 
 function fmtTokens(n: number): string {
@@ -394,9 +407,10 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		}
 
 		const isSession = data.kind === "session";
+		const finishTime = data.endedAt === undefined ? "" : ` · ${fmtLocalFinishTime(data.endedAt)}`;
 		const headline = isSession
 			? `📊 Session · ${plural(data.turnCount, "turn")} across ${plural(data.index, "exchange")}`
-			: `⏱ Exchange ${data.index} · ${fmtDuration(data.durationMs)}`;
+			: `⏱ Exchange ${data.index} · ${fmtDuration(data.durationMs)}${finishTime}`;
 		box.addChild(
 			new Text(
 				theme.fg("dim", `${headline}  ${data.model}`),
