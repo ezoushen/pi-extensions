@@ -77,15 +77,23 @@ test("settled progress guides every row across Pi components and keeps the final
 		const lastProcessAt = row("▸ ◈0 ⚙1");
 		const finalAt = row("Final answer.");
 		for (const index of [progressAt, firstProcessAt, firstNoteAt, secondNoteAt, middleProcessAt, middleThoughtAt, middleToolAt, bodyAt, nextNoteAt, lastProcessAt, finalAt]) assert.notEqual(index, -1, `missing rendered row: ${index}`);
-		assert.equal(rendered[firstProcessAt].slice(0, 2), "├ ");
-		assert.equal(rendered[firstNoteAt].slice(0, 2), "│ ");
-		assert.equal(rendered[secondNoteAt].slice(0, 2), "│ ");
-		assert.equal(rendered[middleProcessAt].slice(0, 2), "├ ");
-		assert.equal(rendered[middleThoughtAt].slice(0, 4), "│ ├ ");
-		assert.equal(rendered[middleToolAt].slice(0, 4), "│ └ ");
-		assert.equal(rendered[bodyAt].slice(0, 6), "│     ");
-		assert.equal(rendered[nextNoteAt].slice(0, 2), "│ ");
-		assert.equal(rendered[lastProcessAt].slice(0, 2), "└ ");
+		const outerGuideColumn = rendered[progressAt].indexOf("▾");
+		const nestedGuideColumn = rendered[middleProcessAt].indexOf("▾");
+		assert.equal(rendered[firstProcessAt].indexOf("├"), outerGuideColumn);
+		assert.equal(rendered[firstProcessAt].indexOf("▸"), outerGuideColumn + 2);
+		assert.equal(rendered[firstNoteAt].indexOf("│"), outerGuideColumn);
+		assert.equal(rendered[secondNoteAt].indexOf("│"), outerGuideColumn);
+		assert.equal(rendered[middleProcessAt].indexOf("├"), outerGuideColumn);
+		assert.equal(rendered[middleProcessAt].indexOf("▾"), outerGuideColumn + 2);
+		assert.equal(rendered[middleThoughtAt].indexOf("├"), nestedGuideColumn);
+		assert.equal(rendered[middleThoughtAt].indexOf("◈"), nestedGuideColumn + 2);
+		assert.equal(rendered[middleToolAt].indexOf("└"), nestedGuideColumn);
+		assert.equal(rendered[middleToolAt].indexOf("⚙"), nestedGuideColumn + 2);
+		assert.equal(rendered[bodyAt].indexOf("│"), outerGuideColumn);
+		assert.equal(rendered[bodyAt].indexOf("alpha"), nestedGuideColumn + 4);
+		assert.equal(rendered[nextNoteAt].indexOf("│"), outerGuideColumn);
+		assert.equal(rendered[lastProcessAt].indexOf("└"), outerGuideColumn);
+		assert.equal(rendered[lastProcessAt].indexOf("▸"), outerGuideColumn + 2);
 		assert.equal(rendered[finalAt].trimStart().startsWith("Final answer."), true);
 
 		for (const line of rows) assert.ok(visibleWidth(line) <= width, `row exceeds width: ${plain(line)}`);
@@ -94,8 +102,12 @@ test("settled progress guides every row across Pi components and keeps the final
 		assert.equal(rendered[finalAt - 1], "", "the native separator before the final answer is outside the progress guide");
 		for (let index = progressAt + 1; index < lastProcessAt; index++) {
 			const line = rendered[index];
-			assert.ok(line.startsWith("│ ") || line.startsWith("├ "), `row breaks the outer guide: ${JSON.stringify(line)}`);
-			if (!line.trim()) assert.ok(line.startsWith("│ "), "a blank row between non-last progress children keeps its vertical guide");
+			const guideColumns = [...line.matchAll(/[│├└]/g)].map((match) => match.index);
+			assert.ok(guideColumns.includes(outerGuideColumn), `row breaks the outer guide column: ${JSON.stringify(line)}`);
+			for (const column of guideColumns.filter((value) => value > outerGuideColumn)) {
+				assert.equal(column, nestedGuideColumn, `nested guide is not under its parent control: ${JSON.stringify(line)}`);
+			}
+			if (!line.trim()) assert.ok(guideColumns.includes(outerGuideColumn), "a blank row between non-last progress children keeps its vertical guide");
 		}
 		for (const line of rowsOf(components, 40)) assert.ok(visibleWidth(line) <= 40, `narrow row exceeds width: ${plain(line)}`);
 	} finally {
@@ -135,11 +147,13 @@ test("a streaming process guides block titles and continues through an opened no
 		const lastTitleAt = row("⚙ read  last.txt");
 		for (const index of [processAt, thoughtAt, firstTitleAt, bodyAt, nextThoughtAt, lastTitleAt]) assert.notEqual(index, -1);
 		assert.equal(rendered[processAt].trimStart().startsWith("▾ "), true, "the process control is the layer root");
-		assert.equal(rendered[thoughtAt].slice(0, 2), "├ ");
-		assert.equal(rendered[firstTitleAt].slice(0, 2), "├ ");
-		assert.equal(rendered[bodyAt].slice(0, 4), "│   ");
-		assert.equal(rendered[nextThoughtAt].slice(0, 2), "├ ");
-		assert.equal(rendered[lastTitleAt].slice(0, 2), "└ ");
+		const processGlyphColumn = rendered[processAt].indexOf("▾");
+		assert.equal(rendered[thoughtAt].indexOf("├"), processGlyphColumn);
+		assert.equal(rendered[firstTitleAt].indexOf("├"), processGlyphColumn);
+		assert.equal(rendered[firstTitleAt].indexOf("⚙"), processGlyphColumn + 2);
+		assert.equal(rendered[bodyAt].indexOf("│"), processGlyphColumn);
+		assert.equal(rendered[nextThoughtAt].indexOf("├"), processGlyphColumn);
+		assert.equal(rendered[lastTitleAt].indexOf("└"), processGlyphColumn);
 		for (const line of groups.flat()) assert.ok(visibleWidth(line) <= width, `row exceeds width: ${plain(line)}`);
 
 		const firstRows = firstTool.render(width);
@@ -147,7 +161,7 @@ test("a streaming process guides block titles and continues through an opened no
 		assert.ok(titleRow >= 0);
 		firstTool.handleMouse({ type: "move", button: "none", x: 5, y: titleRow, width, height: firstRows.length });
 		const hovered = plain(firstTool.render(width)[titleRow]);
-		assert.ok(hovered.startsWith("├ "));
+		assert.ok(hovered.startsWith(" ├"));
 		assert.ok(firstTool.render(width)[titleRow].indexOf(selection) > firstTool.render(width)[titleRow].indexOf("\x1b[39m"), "hover background starts after the gutter");
 		for (const component of [assistantComponent, firstTool, nextAssistant, lastTool]) {
 			for (const line of component.render(40)) assert.ok(visibleWidth(line) <= 40, `narrow row exceeds width: ${plain(line)}`);

@@ -101,9 +101,10 @@ test("real Pi components show one settled progress line, then unwind native inte
 		model.toggleLatestExchange();
 		const expanded = lines();
 		assert.match(expanded[0], /▾ Worked for/);
-		assert.ok(expanded.find((line) => line.includes("Note A"))?.startsWith("│  "));
-		assert.ok(expanded.find((line) => line.includes("Note B"))?.startsWith("│  "));
-		assert.ok(expanded.find((line) => line.includes("▸ ◈"))?.startsWith("├  "));
+		const progressGlyphColumn = expanded[0].indexOf("▾");
+		assert.equal(expanded.find((line) => line.includes("Note A"))?.indexOf("│"), progressGlyphColumn);
+		assert.equal(expanded.find((line) => line.includes("Note B"))?.indexOf("│"), progressGlyphColumn);
+		assert.equal(expanded.find((line) => line.includes("▸ ◈"))?.indexOf("├"), progressGlyphColumn);
 		const expandedRows = rawLines();
 		const expandedProgress = expandedRows.findIndex((line) => line.includes("Worked for"));
 		const firstProcess = expandedRows.findIndex((line, index) => index > expandedProgress && line.includes("▸ ◈"));

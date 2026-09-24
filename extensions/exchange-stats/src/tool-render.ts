@@ -78,10 +78,11 @@ const thinkingOwners = new WeakMap<object, { add: (owner: ThinkingOwner) => Patc
 /** Two columns per open layer; tree guides replace them without moving native Pi output. */
 const BLOCK_INDENT = 2;
 
-/** Replaces an open layer's two-column indent with a dim tree guide from model item order. */
+/** Aligns each dim tree guide with its parent control within the two-column layer gutter. */
 function withGuide(theme: TitleTheme | undefined, prefix: string, lines: string[]): string[] {
 	if (!prefix) return lines;
-	const guide = theme?.fg("dim", prefix) ?? prefix;
+	const aligned = prefix.replace(/([│├└]) /g, " $1");
+	const guide = theme?.fg("dim", aligned) ?? aligned;
 	return lines.map((line) => guide + line);
 }
 
