@@ -1,0 +1,37 @@
+{
+  "name": "pi-interrupt-steer",
+  "version": "0.1.0",
+  "description": "Interrupt a Pi run and send the editor text as the next prompt.",
+  "type": "module",
+  "main": "./interrupt-steer.js",
+  "exports": "./interrupt-steer.js",
+  "files": [
+    "interrupt-steer.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ezoushen/pi-extensions.git",
+    "directory": "extensions/interrupt-steer"
+  },
+  "homepage": "https://github.com/ezoushen/pi-extensions/tree/main/extensions/interrupt-steer#readme",
+  "bugs": {
+    "url": "https://github.com/ezoushen/pi-extensions/issues"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./interrupt-steer.js"
+    ]
+  }
+}
