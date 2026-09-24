@@ -147,7 +147,7 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		assert.match(secondLive, /▸.*◈/);
 		const settled = await waitForScreen(terminal, (value) =>
 			value.includes("Both file contents are available.") && value.includes("Exchange 2") &&
-			(value.match(/▸.*◈/g)?.length ?? 0) >= 1, child, 20000);
+			/▸ Worked for .*◈/.test(value), child, 20000);
 		optionClickProgress(child, settled);
 		const optionOpened = await waitForScreen(terminal, (value) =>
 			value.includes("▾ Worked for") && value.includes("▾ ◈ 1 ⚙ 0") && value.includes("▾ ◈ 1 ⚙ 2") &&
