@@ -305,7 +305,7 @@ test("the progress control works when interim assistant text is its first item",
 		assert.match(expanded.join("\n"), /▾ Worked for/);
 		const progressRow = expanded.findIndex((line) => line.includes("Worked for"));
 		const firstText = expanded.findIndex((line, index) => index > progressRow && line.includes("I will inspect the file."));
-		assert.equal(firstText - progressRow - 1, 1, JSON.stringify(expanded));
+		assert.equal(firstText - progressRow - 1, 0, JSON.stringify(expanded));
 	} finally { patch.restore(); }
 });
 

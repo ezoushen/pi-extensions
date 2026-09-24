@@ -385,7 +385,7 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 				const guide = model.progressGuideForItem(key);
 				const continuation = guide?.continuation ?? "  ";
 				const rows = progress.open ? withGuide(getTheme(), continuation, originalRender(width - BLOCK_INDENT)) : [];
-				return progress.open ? [...line, ...(line.length && rows.length ? withGuide(getTheme(), continuation, [""]) : []), ...rows] : line;
+				return progress.open ? [...line, ...rows] : line;
 			};
 			childKeys.set(native, key);
 			const controls = textControls.get(this) ?? [];
@@ -407,6 +407,12 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 			const process = processByKey.get(key);
 			return process !== undefined && model.isProcessOpen(process.id);
 		};
+		const compactLead = (key: string) => {
+			const progress = model.progressForItem(key);
+			if (progress) return progress.lead;
+			const process = processByKey.get(key);
+			return process !== undefined && model.isProcessLead(process.id, key);
+		};
 		const sameCompactGroup = (left: string, right: string) => {
 			const leftProgress = model.progressForItem(left);
 			const rightProgress = model.progressForItem(right);
@@ -420,7 +426,7 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 			children[0] = {
 				constructor: initialSpacer.constructor,
 				render(width: number) {
-					if (firstContentKey && compactItem(firstContentKey)) return [];
+					if (firstContentKey && compactItem(firstContentKey) && !compactLead(firstContentKey)) return [];
 					const progress = messageProgress();
 					if (progress && !progress.open && !hasProgressLead() && !hasFinalText()) return [];
 					const prefix = (!progress || progress.open) && firstContentKey ? model.guideBeforeItem(firstContentKey) : undefined;
