@@ -5,7 +5,15 @@ import { join } from "node:path";
 import test from "node:test";
 import registerInterruptSteer from "./interrupt-steer.ts";
 
-function createHarness({ editorText = "", idle = false, steering = [], followUp = [], sendError } = {}) {
+function createHarness({
+	editorText = "",
+	idle = false,
+	steering = [],
+	followUp = [],
+	sendError,
+	busyPollsAfterAbort = 2,
+	neverIdle = false,
+} = {}) {
 	const shortcuts = new Map();
 	const calls = [];
 	const events = new Map();
@@ -13,6 +21,7 @@ function createHarness({ editorText = "", idle = false, steering = [], followUp 
 	const notifications = [];
 	let currentText = editorText;
 	let agentIdle = idle;
+	let pollsUntilIdle;
 
 	const pi = {
 		registerShortcut(key, options) {
@@ -44,6 +53,10 @@ function createHarness({ editorText = "", idle = false, steering = [], followUp 
 		},
 		isIdle() {
 			calls.push("isIdle");
+			if (!agentIdle && pollsUntilIdle !== undefined && !neverIdle) {
+				if (pollsUntilIdle === 0) agentIdle = true;
+				else pollsUntilIdle--;
+			}
 			return agentIdle;
 		},
 		hasPendingMessages() {
@@ -52,15 +65,12 @@ function createHarness({ editorText = "", idle = false, steering = [], followUp 
 		},
 		abort() {
 			calls.push("abort");
+			pollsUntilIdle = busyPollsAfterAbort;
 			const queued = [...steering, ...followUp];
 			steering.length = 0;
 			followUp.length = 0;
 			const queuedText = queued.join("\n\n");
 			currentText = [queuedText, currentText].filter((text) => text.trim()).join("\n\n");
-		},
-		async waitForIdle() {
-			calls.push("waitForIdle");
-			agentIdle = true;
 		},
 	};
 
@@ -78,21 +88,23 @@ function createHarness({ editorText = "", idle = false, steering = [], followUp 
 	};
 }
 
-test("interrupt shortcut aborts, waits for idle, then sends the editor text once", async () => {
+test("interrupt shortcut aborts, polls for idle, then sends the editor text once", async () => {
 	const harness = createHarness({ editorText: "do X instead" });
 	registerInterruptSteer(harness.pi);
 	const shortcut = harness.shortcuts.get("ctrl+alt+enter");
 
 	assert.ok(shortcut);
+	assert.equal("waitForIdle" in harness.ctx, false);
 	await shortcut.handler(harness.ctx);
 
 	assert.deepEqual(harness.sent, [{ content: "do X instead", options: undefined }]);
 	assert.equal(harness.editorText, "");
 	assert.equal(harness.calls.filter((call) => call === "abort").length, 1);
-	assert.equal(harness.calls.filter((call) => call === "waitForIdle").length, 1);
-	assert.ok(harness.calls.indexOf("abort") < harness.calls.indexOf("waitForIdle"));
-	assert.ok(harness.calls.indexOf("waitForIdle") < harness.calls.indexOf("sendUserMessage"));
-	assert.ok(harness.calls.indexOf("waitForIdle") < harness.calls.lastIndexOf("getEditorText"));
+	const abortIndex = harness.calls.indexOf("abort");
+	const sendIndex = harness.calls.indexOf("sendUserMessage");
+	assert.equal(harness.calls.slice(abortIndex + 1, sendIndex).filter((call) => call === "isIdle").length, 3);
+	assert.ok(abortIndex < sendIndex);
+	assert.ok(harness.calls.lastIndexOf("getEditorText") < sendIndex);
 });
 
 test("interrupt sends Pi-restored steering and follow-up messages before the typed text", async () => {
@@ -111,6 +123,25 @@ test("interrupt sends Pi-restored steering and follow-up messages before the typ
 	}]);
 	assert.equal(harness.editorText, "");
 	assert.deepEqual(harness.notifications, []);
+});
+
+test("idle wait timeout leaves Pi-restored text in the editor and warns", async () => {
+	const harness = createHarness({
+		editorText: "do X instead",
+		steering: ["queued steering"],
+		neverIdle: true,
+	});
+	registerInterruptSteer(harness.pi);
+
+	await harness.shortcuts.get("ctrl+alt+enter").handler(harness.ctx);
+
+	assert.deepEqual(harness.sent, []);
+	assert.equal(harness.editorText, "queued steering\n\ndo X instead");
+	assert.equal(harness.calls.includes("sendUserMessage"), false);
+	assert.equal(harness.calls.includes("setEditorText"), false);
+	assert.equal(harness.notifications.length, 1);
+	assert.equal(harness.notifications[0].level, "warning");
+	assert.match(harness.notifications[0].message, /did not become idle within 5 seconds/);
 });
 
 test("idle shortcut sends editor text without aborting", async () => {
@@ -154,7 +185,7 @@ test("queued messages are sent when the editor is empty", async () => {
 
 	assert.deepEqual(harness.sent, [{ content: "continue with the queued change", options: undefined }]);
 	assert.equal(harness.editorText, "");
-	assert.ok(harness.calls.indexOf("abort") < harness.calls.indexOf("waitForIdle"));
+	assert.ok(harness.calls.indexOf("abort") < harness.calls.indexOf("sendUserMessage"));
 });
 
 test("failed send restores the message and shows one warning", async () => {

@@ -5,7 +5,18 @@ import { resolveSettings, type SettingsRuntime } from "../../shared/settings.ts"
 const DEFAULT_KEY = "ctrl+alt+enter";
 const KEY_SETTING = { key: { default: DEFAULT_KEY, env: "PI_INTERRUPT_STEER_KEY" } } as const;
 type ShortcutKey = Parameters<ExtensionAPI["registerShortcut"]>[0];
-type InterruptContext = ExtensionContext & { waitForIdle(): Promise<void> };
+const IDLE_WAIT_TIMEOUT_MS = 5_000;
+const IDLE_POLL_INTERVAL_MS = 25;
+
+async function waitUntilIdle(ctx: ExtensionContext): Promise<boolean> {
+	const deadline = Date.now() + IDLE_WAIT_TIMEOUT_MS;
+	while (!ctx.isIdle()) {
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) return false;
+		await new Promise<void>((resolve) => setTimeout(resolve, Math.min(IDLE_POLL_INTERVAL_MS, remaining)));
+	}
+	return true;
+}
 
 function isShortcutKey(value: unknown): value is ShortcutKey {
 	if (typeof value !== "string") return false;
@@ -64,8 +75,10 @@ export default function registerInterruptSteer(pi: ExtensionAPI, settingsRuntime
 			}
 
 			ctx.abort();
-			// Pi supplies this on TUI shortcut contexts at runtime, though ExtensionContext omits it.
-			await (ctx as InterruptContext).waitForIdle();
+			if (!await waitUntilIdle(ctx)) {
+				announce(ctx, "pi-interrupt-steer: agent did not become idle within 5 seconds; text left in the editor", "warning");
+				return;
+			}
 			sendEditorText(pi, ctx, ctx.ui.getEditorText());
 		},
 	});
