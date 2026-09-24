@@ -50,6 +50,11 @@ type ExchangeProgress = {
 	tools: number;
 	notes: number;
 };
+type FoldControl =
+	| { kind: "progress"; exchange: number }
+	| { kind: "process"; id: string }
+	| { kind: "thinking"; message: ThinkingMessage; index: number }
+	| { kind: "tool"; id: string };
 
 const MAX_THINKING_MESSAGES = 256;
 
@@ -387,6 +392,32 @@ export class ToolFoldModel {
 		if (!progress) return undefined;
 		progress.open = !progress.open;
 		return progress.open;
+	}
+	/** Toggles a fold row and sets its direct children to the same open state. */
+	toggleOneLevel(control: FoldControl): boolean | undefined {
+		if (control.kind === "progress") {
+			const open = this.toggleProgress(control.exchange);
+			if (open === undefined) return undefined;
+			for (const process of this.processList) {
+				if (process.exchange === control.exchange && process.open !== open) this.toggleProcess(process.id);
+			}
+			return open;
+		}
+		if (control.kind === "process") {
+			const open = this.toggleProcess(control.id);
+			if (open === undefined) return undefined;
+			for (const block of this.processById.get(control.id)!.blocks) {
+				if (block.kind === "thinking") {
+					if (this.isThinkingOpen(block.message, block.index) !== open) this.toggleThinking(block.message, block.index);
+				} else {
+					const id = block.key.slice(5);
+					if (this.isOpen(id) !== open) this.toggle(id);
+				}
+			}
+			return open;
+		}
+		if (control.kind === "thinking") return this.toggleThinking(control.message, control.index);
+		return this.toggle(control.id);
 	}
 	private cursorRows(): Array<{ key: string; title: string; toggle: () => void }> {
 		const rows: Array<{ key: string; title: string; toggle: () => void }> = [];
