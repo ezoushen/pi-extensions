@@ -6,12 +6,12 @@ as one process line, even when it spans assistant messages or turns. The line sh
 block counts and total wall time, or the current block and its live time while
 streaming. In the running exchange, a tool call that has streamed but not yet started
 shows as `⚙ <tool> queued`. A call whose exchange settled, or was restored, without a
-result shows `no result` in its title and no live activity. At the next fold level, each block has a one-line title in stream order, indented two columns under its process line.
+result shows `no result` in its title and no live activity. At the next fold level, each block has a one-line title in stream order, with dim `├` and `└` guides under its process line and `│` continuing through rows with later siblings.
 While an exchange streams, assistant text stays visible. After it settles, an
 exchange with a process and a trailing answer folds its processes and earlier
 assistant text into one dim progress line at the first progress item. Opening that
-line shows the process lines and earlier text beneath it, indented two columns; the
-trailing answer stays visible and unindented. An exchange without a process or a
+line shows the process lines and earlier text beneath it, grouped by dim tree guides;
+the trailing answer stays visible without a guide. An exchange without a process or a
 trailing answer keeps its existing rows.
 Tool titles show the argument, status, duration, and result line count. Thinking
 titles show the trace's last complete sentence, or `Thinking` until one completes.
@@ -23,7 +23,7 @@ The headline is shortened first to make room for duration and stats.
 Titles also show elapsed time, thinking tokens and rate while streaming; a `~` marks
 token estimates when the provider has not reported reasoning usage. Settled titles
 show duration and word count. Opening a block keeps its title and shows Pi's native
-output below it, indented two more columns; a thinking block shows Pi's full trace
+output below it, two columns beneath its tree guide; a thinking block shows Pi's full trace
 there, regardless of Pi's hide-thinking setting. Process lines, settled progress lines,
 and block titles use the active Pi theme's dim color and italic style, except the line
 selected by the transcript cursor, which uses the theme's accent color and stays
@@ -40,7 +40,7 @@ or the streaming processes. The picker marks open items; opening a block also op
 its process, while folding that block leaves the process open. These controls change
 only the display. In fullscreen mode, left click a process line, progress line, or
 block title to toggle it. Hovering one of these rows brightens its text and puts it
-on the theme's selection background, from its indented start to the right edge;
+on the theme's selection background, from the title after its tree guide to the right edge;
 opened native output is not highlighted. The highlight follows the pointer across fold rows,
 assistant text and the exchange card; it can stay on a row after the pointer
 moves straight to Pi's own rows (a user message, the editor), until the pointer
@@ -170,8 +170,8 @@ pi install npm:pi-exchange-stats
 Submit a prompt that makes at least one tool call and produces thinking. While it
 streams, check that process lines update and assistant text remains visible. After Pi
 settles, check that one progress line covers the work before the final answer; open it
-to see process lines and interim text indented beneath it, with the final answer
-unindented. Check that exchanges without a process or a trailing answer stay unfolded.
+to see process lines and interim text grouped beneath it with tree guides, while the
+final answer stays unmarked. Check that exchanges without a process or a trailing answer stay unfolded.
 Expand the exchange card and verify that its summary and token and cost totals match
 the transcript. Open a process to see individual block timings and counts. Run
 `/exstats` and confirm that the session card equals the sum of completed
