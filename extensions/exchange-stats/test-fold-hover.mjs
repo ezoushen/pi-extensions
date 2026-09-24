@@ -123,7 +123,8 @@ test("the transcript cursor's accent wins over hover on the same row", () => {
 		model.toggleProcess(model.processes()[0].id);
 		assert.equal(model.startCursor(), true);
 		assert.equal(model.isCursorHighlighted(`process:${model.processes()[0].id}`), true);
-		let row = assistant.render(80)[processRow];
+		let openLines = assistant.render(80);
+		let row = openLines[rowOf(openLines, "▾ ◈")];
 		assert.match(row, /\x1b\[38;5;3m/);
 		assert.match(row, /\x1b\[3m/);
 		assert.doesNotMatch(row, HOVER);

@@ -110,7 +110,7 @@ test("real Pi components show one settled progress line, then unwind native inte
 		const expandedRows = rawLines();
 		const expandedProgress = expandedRows.findIndex((line) => line.includes("Worked for"));
 		const firstProcess = expandedRows.findIndex((line, index) => index > expandedProgress && line.includes("▸ ◈"));
-		assert.equal(firstProcess - expandedProgress - 1, 1, JSON.stringify(expandedRows));
+		assert.equal(firstProcess - expandedProgress - 1, 0, "the first child directly follows the unwound progress line");
 		assert.equal(expanded.at(-1)?.indexOf("Final answer"), lines().at(-1)?.indexOf("Final answer"));
 		model.toggleLatestExchange();
 		assert.equal(lines().filter((line) => line.includes("Worked for")).length, 1);
