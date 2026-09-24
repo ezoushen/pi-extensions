@@ -8,6 +8,14 @@ import { installToolFold } from "./src/tool-render.ts";
 initTheme("dark");
 const ui = { requestRender() {} };
 const result = (text, isError = false) => ({ content: [{ type: "text", text }], isError });
+const plain = (line) => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b\][^\x07]*(?:\x07|\x1b\\\\)/g, "");
+const trimBlankEdges = (lines) => {
+	let start = 0;
+	let end = lines.length;
+	while (start < end && plain(lines[start]).trim() === "") start++;
+	while (end > start && plain(lines[end - 1]).trim() === "") end--;
+	return lines.slice(start, end);
+};
 
 function mount(now = () => 0, args = { command: "printf 'first\\nsecond\\n'" }) {
 	const model = new ToolFoldModel(now);
@@ -51,12 +59,12 @@ test("running time grows between renders and failed calls show a cross", () => {
 	} finally { restore(); }
 });
 
-test("model toggle returns the component's original full rendering and folds again", () => {
+test("model toggle opens native tool output without its blank edge padding and folds again", () => {
 	const { model, component, original, restore } = mount();
 	try {
 		component.updateResult(result("first\nsecond"));
 		model.end("call-1", false, component.result, 300);
-		const expected = original.call(component, 80);
+		const expected = trimBlankEdges(original.call(component, 80));
 		assert.equal(component.render(80).length, 1);
 		assert.equal(model.toggle("call-1"), true);
 		const opened = component.render(80);
@@ -145,6 +153,6 @@ test("tool title uses the active dim theme on each render; native open output ke
 		model.toggle("themed-call");
 		const opened = tool.render(80);
 		assert.match(opened[0], /\x1b\[38;2;120;120;120m.*bash/);
-		assert.deepEqual(opened.slice(1), original.call(tool, 80));
+		assert.deepEqual(opened.slice(1), trimBlankEdges(original.call(tool, 80)));
 	} finally { patch.restore(); }
 });
