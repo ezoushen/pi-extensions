@@ -6,14 +6,16 @@
     "extensions/*"
   ],
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@xterm/headless": "6.0.0",
     "esbuild": "0.28.2",
     "typebox": "*"
   },
   "scripts": {
     "build": "npx esbuild extensions/*/*.ts --bundle --platform=node --format=esm --packages=external --outbase=. --outdir=.",
     "test": "node --experimental-strip-types --test extensions/*/test-*.mjs test/*.test.mjs",
-    "test:live": "node --experimental-strip-types --test test/live/real-session.test.mjs",
+    "pretest:live": "npm run build",
+    "test:live": "node --experimental-strip-types --test test/live/*.test.mjs",
     "pretest": "npm run build"
   }
 }

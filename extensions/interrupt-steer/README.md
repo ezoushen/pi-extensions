@@ -25,9 +25,10 @@ extension restores the text to the editor and shows a warning. Pi may report
 send errors asynchronously; the extension cannot restore editor text for those
 errors.
 
-The terminal must distinguish `ctrl+alt+enter` for this shortcut to fire. A
-terminal without the kitty keyboard protocol may report it as `alt+enter`, which
-Pi uses to queue a follow-up message.
+The terminal must send `ctrl+alt+enter` distinctly for this shortcut to fire.
+A terminal without the kitty keyboard protocol may send the legacy `ESC CR`
+sequence instead. Pi interprets that as `alt+enter`: the editor text is queued as
+a follow-up, the current response finishes first, and the run is not interrupted.
 
 ## Settings
 
