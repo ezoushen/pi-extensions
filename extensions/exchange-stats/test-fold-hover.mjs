@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AssistantMessageComponent, ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
 import { ToolFoldModel } from "./src/tool-fold.ts";
-import { installThinkingFold, installToolFold } from "./src/tool-render.ts";
+import { endHoverOnMove, installThinkingFold, installToolFold } from "./src/tool-render.ts";
 
 initTheme("dark");
 const ui = { requestRender() {} };
@@ -39,7 +39,12 @@ function setup(timestamp, getTheme = theme, settled = false) {
 	const tool = new ToolExecutionComponent("bash", `hover-${timestamp}`, { command: "echo hover" }, {}, undefined, ui, ".");
 	tool.updateResult({ content: [{ type: "text", text: "hover" }], isError: false }, false);
 	const rowOf = (lines, needle) => lines.findIndex((line) => plain(line).includes(needle));
-	return { model, message, assistant, tool, rowOf, restore() { thinkingPatch.restore(); toolPatch.restore(); } };
+	return {
+		model, message, assistant, tool, rowOf,
+		restoreThinking() { thinkingPatch.restore(); },
+		restoreTool() { toolPatch.restore(); },
+		restore() { thinkingPatch.restore(); toolPatch.restore(); },
+	};
 }
 
 test("hovering a process line highlights it and asks Pi to repaint", () => {
@@ -79,6 +84,54 @@ test("hovering one owner's settled progress does not highlight another owner's m
 	} finally {
 		second.restore();
 		first.restore();
+	}
+});
+
+test("restoring a thinking owner clears its hover", () => {
+	const owner = setup(920, theme, true);
+	try {
+		const lines = owner.assistant.render(80);
+		const row = owner.rowOf(lines, "▸ Worked for");
+		assert.ok(row >= 0);
+		owner.assistant.handleMouse(move(row, lines.length));
+		assert.match(owner.assistant.render(80)[row], HOVER);
+
+		owner.restoreThinking();
+		assert.equal(endHoverOnMove({ type: "move" }), undefined, "restore clears the previous hover before the next pointer move");
+	} finally { owner.restore(); }
+});
+
+test("restoring a tool owner clears its hover", () => {
+	const owner = setup(921);
+	try {
+		owner.model.toggleProcess(owner.model.processes()[0].id);
+		let lines = owner.tool.render(80);
+		const row = owner.rowOf(lines, "⚙ bash  echo");
+		assert.ok(row >= 0);
+		owner.tool.handleMouse(move(row, lines.length));
+		lines = owner.tool.render(80);
+		assert.match(lines[row], HOVER);
+
+		owner.restoreTool();
+		assert.equal(endHoverOnMove({ type: "move" }), undefined, "restore clears the previous hover before the next pointer move");
+	} finally { owner.restore(); }
+});
+
+test("restoring an owner preserves another live owner's hover", () => {
+	const hovered = setup(911, theme, true);
+	const detached = setup(912, theme, true);
+	try {
+		const lines = hovered.assistant.render(80);
+		const row = hovered.rowOf(lines, "▸ Worked for");
+		assert.ok(row >= 0);
+		hovered.assistant.handleMouse(move(row, lines.length));
+		assert.match(hovered.assistant.render(80)[row], HOVER);
+
+		detached.restore();
+		assert.match(hovered.assistant.render(80)[row], HOVER, "detaching a different model leaves the live owner's hover intact");
+	} finally {
+		detached.restore();
+		hovered.restore();
 	}
 });
 

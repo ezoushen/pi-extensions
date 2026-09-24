@@ -287,7 +287,9 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 		}
 		owners.add(owner);
 		return { installed: true, restore() {
-			if (!owners.delete(owner) || owners.size > 0) return;
+			if (!owners.delete(owner)) return;
+			if (hoveredControl?.model === owner.model) setHover(undefined, undefined);
+			if (owners.size > 0) return;
 			// A later wrapper may still call ours; keep it dormant and reusable while attached.
 			if (prototype.render === folded && prototype.handleMouse === foldedMouse) toolOwners.delete(prototype);
 			if (prototype.render === folded) prototype.render = original;
@@ -639,7 +641,9 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 	const add = (owner: ThinkingOwner): Patch => {
 		owners.add(owner);
 		return { installed: true, restore() {
-			if (!owners.delete(owner) || owners.size > 0) return;
+			if (!owners.delete(owner)) return;
+			if (hoveredControl?.model === owner.model) setHover(undefined, undefined);
+			if (owners.size > 0) return;
 			// A later wrapper may still call ours; keep it dormant and reusable while attached.
 			if (prototype.updateContent === folded) thinkingOwners.delete(prototype);
 			if (prototype.updateContent === folded) prototype.updateContent = original;
