@@ -59,7 +59,9 @@ test("model toggle returns the component's original full rendering and folds aga
 		const expected = original.call(component, 80);
 		assert.equal(component.render(80).length, 1);
 		assert.equal(model.toggle("call-1"), true);
-		assert.deepEqual(component.render(80), expected);
+		const opened = component.render(80);
+		assert.match(opened[0], /⚙ .*✓/, "the title stays when the block opens");
+		assert.deepEqual(opened.slice(1), expected);
 		assert.equal(model.toggle("call-1"), false);
 		assert.equal(component.render(80).length, 1);
 	} finally { restore(); }
@@ -141,6 +143,8 @@ test("tool title uses the active dim theme on each render; native open output ke
 		ansi = "\x1b[38;2;120;120;120m";
 		assert.match(tool.render(80)[0], /\x1b\[38;2;120;120;120m.*bash.*\x1b\[0m/);
 		model.toggle("themed-call");
-		assert.deepEqual(tool.render(80), original.call(tool, 80));
+		const opened = tool.render(80);
+		assert.match(opened[0], /\x1b\[38;2;120;120;120m.*bash/);
+		assert.deepEqual(opened.slice(1), original.call(tool, 80));
 	} finally { patch.restore(); }
 });

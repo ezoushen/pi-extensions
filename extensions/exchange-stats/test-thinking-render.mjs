@@ -121,8 +121,9 @@ test("thinking title uses active dim ANSI while text and opened trace keep nativ
 		assert.deepEqual(foldedText.render(80), nativeText.render(80));
 		const region = folded.contentContainer.children.find((child) => child.constructor.name === "MouseRegion");
 		region.onMouse({ type: "click", button: "left" });
-		assert.deepEqual(folded.contentContainer.children.find((child) => child.constructor.name === "MouseRegion").render(80),
-			native.contentContainer.children.find((child) => child.constructor.name === "MouseRegion").render(80));
+		const opened = folded.contentContainer.children.find((child) => child.constructor.name === "MouseRegion").render(80);
+		assert.match(opened[0], /Thinking/, "the title stays when the block opens");
+		assert.deepEqual(opened.slice(1), native.contentContainer.children.find((child) => child.constructor.name === "MouseRegion").render(80));
 	} finally { patch.restore(); }
 });
 

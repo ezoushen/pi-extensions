@@ -6,7 +6,7 @@ as one process line, even when it spans assistant messages or turns. The line sh
 block counts and total wall time, or the current block and its live time while
 streaming. In the running exchange, a tool call that has streamed but not yet started
 shows as `⚙ <tool> queued`. A call whose exchange settled, or was restored, without a
-result shows `no result` in its title and no live activity. At the next fold level, each block has a one-line title in stream order.
+result shows `no result` in its title and no live activity. At the next fold level, each block has a one-line title in stream order, indented two columns under its process line.
 Tool titles show the argument, status, duration, and result line count. Thinking
 titles show the trace's last complete sentence, or `Thinking` until one completes.
 With `summaryModel` configured, a short model headline takes its place when ready;
@@ -16,8 +16,9 @@ model headline; it gives one warning per session.
 The headline is shortened first to make room for duration and stats.
 Titles also show elapsed time, thinking tokens and rate while streaming; a `~` marks
 token estimates when the provider has not reported reasoning usage. Settled titles
-show duration and word count. Opening a thinking block shows Pi's full trace,
-regardless of Pi's hide-thinking setting. Process lines and block titles use the
+show duration and word count. Opening a block keeps its title and shows Pi's native
+output below it, indented two more columns; a thinking block shows Pi's full trace
+there, regardless of Pi's hide-thinking setting. Process lines and block titles use the
 active Pi theme's dim color, except the line selected by the transcript cursor,
 which uses the theme's accent color while the cursor is active. Assistant text and
 opened native content keep Pi's own styling.

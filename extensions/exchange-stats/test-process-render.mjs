@@ -85,7 +85,7 @@ test("tool and thinking titles use the same Pi content margin", () => {
 		const toolLine = tool.render(80).find((line) => line.includes("⚙ read"));
 		assert.ok(thinkingLine && toolLine);
 		assert.equal(thinkingLine.indexOf("◈"), toolLine.indexOf("⚙"));
-		assert.equal(toolLine.indexOf("⚙"), 2);
+		assert.equal(toolLine.indexOf("⚙"), 4, "block titles sit two columns in from Pi's pad inside an open process");
 		model.ingest(snapshot(702, [{ type: "text", text: "Next" }, { type: "toolCall", id: "lead-tool", name: "bash", arguments: { command: "pwd" } }]));
 		const lead = new ToolExecutionComponent("bash", "lead-tool", { command: "pwd" }, {}, undefined, ui, ".");
 		assert.equal(lead.render(80)[0].indexOf("▸"), 2);

@@ -27,6 +27,14 @@ type ThinkingOwner = { model: ToolFoldModel; getTheme: () => TitleTheme | undefi
 const toolOwners = new WeakMap<object, { add: (owner: ToolOwner) => Patch }>();
 const thinkingOwners = new WeakMap<object, { add: (owner: ThinkingOwner) => Patch }>();
 
+/** Columns a block title sits right of its process line, and its opened output right of the title. */
+const BLOCK_INDENT = 2;
+
+function indented(lines: string[], columns: number): string[] {
+	const prefix = " ".repeat(columns);
+	return lines.map((line) => prefix + line);
+}
+
 function truncateProcessLine(text: string, width: number): string {
 	return fitThinkingLine(text, width);
 }
@@ -70,7 +78,12 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 		return all.findLast((owner) => owner.model.ownsTool(component.toolCallId)) ?? all.at(-1)!;
 	};
 
+	// Rows and columns this wrapper drew above and left of Pi's own output at the last render,
+	// so clicks inside an opened block reach Pi in Pi's coordinates.
+	const nativeOffset = new WeakMap<ToolComponent, { rows: number; columns: number }>();
+
 	function folded(this: ToolComponent, width: number): string[] {
+		nativeOffset.delete(this);
 		if (owners.size === 0) return original.call(this, width);
 		try {
 			const { model, getTheme, getOutputPad, getHomeDirectory } = ownerFor(this);
@@ -83,11 +96,13 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 				? truncateProcessLine(model.processLine(process.id), contentWidth) : undefined;
 			const processLine = processText === undefined ? [] : new Text(getTheme()?.fg(model.isCursorHighlighted(`process:${process!.id}`) ? "accent" : "dim", processText) ?? processText, padding, 0).render(width);
 			if (process && !model.isProcessOpen(process.id)) return processLine;
-			if (model.isOpen(this.toolCallId) && !model.isCursorHighlighted(`tool:${this.toolCallId}`)) return [...processLine, ...original.call(this, width)];
 			const parts = model.titleParts(this.toolCallId);
 			if (!parts || width <= 0) return original.call(this, width);
-			const name = truncateToWidth(`⚙ ${parts.name}`, contentWidth, "");
-			const remaining = contentWidth - visibleWidth(name);
+			// Inside a process, titles step in under the process line and opened output steps in under its title.
+			const indent = process && width > padding * 2 + BLOCK_INDENT * 2 ? BLOCK_INDENT : 0;
+			const titleWidth = contentWidth - indent;
+			const name = truncateToWidth(`⚙ ${parts.name}`, titleWidth, "");
+			const remaining = titleWidth - visibleWidth(name);
 			const stats = truncateToWidth(`  ${parts.stats}`, remaining, "");
 			const argumentWidth = Math.max(0, remaining - visibleWidth(`  ${parts.stats}`));
 			const home = getHomeDirectory();
@@ -96,16 +111,19 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 			const argument = argumentWidth > 2 && parts.argument
 				? (path === undefined ? truncateToWidth(`  ${parts.argument}`, argumentWidth, "…") : `  ${pathTail(path, argumentWidth - 2)}`).replace(/\x1b\[0m/g, "")
 				: "";
-			const title = name + argument + stats;
-			const styled = getTheme()?.fg(model.isCursorHighlighted(`tool:${this.toolCallId}`) ? "accent" : "dim", title) ?? title;
-			return [...processLine, ...new Text(styled, padding, 0).render(width), ...(model.isOpen(this.toolCallId) ? original.call(this, width) : [])];
+			const text = name + argument + stats;
+			const styled = getTheme()?.fg(model.isCursorHighlighted(`tool:${this.toolCallId}`) ? "accent" : "dim", text) ?? text;
+			const title = indented(new Text(styled, padding, 0).render(width - indent), indent);
+			if (!model.isOpen(this.toolCallId)) return [...processLine, ...title];
+			nativeOffset.set(this, { rows: processLine.length + title.length, columns: indent * 2 });
+			return [...processLine, ...title, ...indented(original.call(this, width - indent * 2), indent * 2)];
 		} catch {
 			return original.call(this, width);
 		}
 	}
 
 	prototype.render = folded;
-	function foldedMouse(this: ToolComponent, event: { type: string; button: string; y: number; width: number; height: number }) {
+	function foldedMouse(this: ToolComponent, event: { type: string; button: string; x?: number; y: number; width: number; height: number }) {
 		if (owners.size === 0) return originalMouse?.call(this, event);
 		const { model } = ownerFor(this);
 		const process = model.processForTool(this.toolCallId);
@@ -121,7 +139,16 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 				return { handled: true, render: false };
 			}
 		}
-		return originalMouse?.call(this, event);
+		const offset = nativeOffset.get(this);
+		if (!offset) return originalMouse?.call(this, event);
+		if (event.y < offset.rows) return undefined;
+		return originalMouse?.call(this, {
+			...event,
+			y: event.y - offset.rows,
+			x: event.x === undefined ? undefined : event.x - offset.columns,
+			width: event.width - offset.columns,
+			height: event.height - offset.rows,
+		});
 	}
 	prototype.handleMouse = foldedMouse;
 	const owners = new Set<ToolOwner>();
@@ -250,10 +277,11 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 					const processLine = processText === undefined ? []
 						: new Text(getTheme()?.fg(model.isCursorHighlighted(`process:${process!.id}`) ? "accent" : "dim", processText) ?? processText, component.outputPad, 0).render(width);
 					if (process && !model.isProcessOpen(process.id)) return processLine;
-					if (model.isThinkingOpen(message, run.index) && !model.isCursorHighlighted(`thinking:${message.timestamp}:${run.index}`)) return [...processLine, ...(native as MouseRegion).child.render(width)];
-					const title = fitThinkingLine(model.thinkingTitle(message, run.index, run.trace, component.isStreaming), width - padding * 2);
-					return [...processLine, ...new Text(getTheme()?.fg(model.isCursorHighlighted(`thinking:${message.timestamp}:${run.index}`) ? "accent" : "dim", title) ?? title, component.outputPad, 0).render(width),
-						...(model.isThinkingOpen(message, run.index) ? (native as MouseRegion).child.render(width) : [])];
+					const indent = process && width > padding * 2 + BLOCK_INDENT * 2 ? BLOCK_INDENT : 0;
+					const title = fitThinkingLine(model.thinkingTitle(message, run.index, run.trace, component.isStreaming), width - indent - padding * 2);
+					const styled = getTheme()?.fg(model.isCursorHighlighted(`thinking:${message.timestamp}:${run.index}`) ? "accent" : "dim", title) ?? title;
+					const body = model.isThinkingOpen(message, run.index) ? indented((native as MouseRegion).child.render(width - indent * 2), indent * 2) : [];
+					return [...processLine, ...indented(new Text(styled, component.outputPad, 0).render(width - indent), indent), ...body];
 				},
 				invalidate() {},
 			};
