@@ -267,8 +267,8 @@ test("the progress row supports click, hover, cursor selection, and narrow width
 		assert.match(answerComponent.render(80).join("\n"), /I found the answer/);
 		assert.ok(model.startCursor());
 		assert.equal(model.cursorTitle(), model.progressLine(1));
-		assert.match(component.render(30).join("\n"), /\x1b\[31m.*Worked/);
-		assert.match(component.render(30).join("\n"), /\x1b\[3m/);
+		assert.match(component.render(18).join("\n"), /\x1b\[31m.*Worked/);
+		assert.match(component.render(18).join("\n"), /\x1b\[3m/);
 		model.cursorToggle();
 		assert.match(model.progressLine(1), /^▾/);
 		model.cursorToggle();
@@ -344,4 +344,14 @@ test("clipped picker rows stay dim italic after the ellipsis", () => {
 		assert.ok(rows.slice(2, -1).some((row) => row.includes("…")), `a block row is clipped at ${width}`);
 		for (const row of rows.slice(1, -1)) assert.doesNotMatch(row, /\x1b\[0m/, `no reset ends the style early at ${width}: ${JSON.stringify(row)}`);
 	}
+});
+
+test("a narrow progress or process line keeps its head, not a count mistaken for a thinking title", async () => {
+	const { fitThinkingLine } = await import("./src/thinking-width.ts");
+	const plainText = (line) => line.replace(/\x1b\[[0-9;]*m/g, "");
+	assert.match(plainText(fitThinkingLine("▸ Worked for 600ms · ◈ 1 ⚙ 1 · 1 note", 18)), /^▸ Worked for/);
+	assert.match(plainText(fitThinkingLine("▸ ◈ 12 ⚙ 3 · 2.2s", 12)), /^▸ ◈ 12/);
+	const streaming = plainText(fitThinkingLine("▸ ◈ 1 ⚙ 0 · ◈ Inspecting the repository layout · 1.0s", 30));
+	assert.match(streaming, /^▸ ◈ 1 ⚙ 0 · ◈ Insp.*… · 1\.0s$/, "a live thinking title inside a process line still keeps its duration");
+	assert.ok(visibleWidth(streaming) <= 30);
 });
