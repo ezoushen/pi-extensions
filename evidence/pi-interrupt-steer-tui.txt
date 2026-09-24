@@ -1,0 +1,251 @@
+Pi 0.87.1; package loaded from packed tarball.
+
+CSI-u while streaming, before interrupt:
+
+ pi v0.87.1
+ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+[Extensions]
+  interrupt-steer.js, readiness.mjs
+
+
+ Warning: fd not found. Offline mode enabled, skipping download.
+
+
+ Start the stream interrupt check.
+
+
+ STREAM_CHUNK_01
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+── ⠹ Working ─────────────────────────────────────────────────────────────────────────────────────────────────
+Use the replacement plan.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/y9/xyr_hns9259dy8mzf17jx9rh0000gn/T/pi-interrupt-steer-agent-o7TvhZ
+4.6%/32k (auto)                                                                                     free-model
+interrupt-steer-ready
+
+CSI-u replacement response:
+
+ pi v0.87.1
+ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+[Extensions]
+  interrupt-steer.js, readiness.mjs
+
+
+ Warning: fd not found. Offline mode enabled, skipping download.
+
+
+ Start the stream interrupt check.
+
+
+ STREAM_CHUNK_01
+
+ Operation aborted
+
+
+ Use the replacement plan.
+
+
+ STEERED_RESPONSE_FINISHED
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/y9/xyr_hns9259dy8mzf17jx9rh0000gn/T/pi-interrupt-steer-agent-o7TvhZ
+↑10 ↓5 0.0%/32k (auto)                                                                              free-model
+interrupt-steer-ready
+
+ESC CR was Pi alt+enter follow-up, after the original response:
+
+ pi v0.87.1
+ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+[Extensions]
+  interrupt-steer.js, readiness.mjs
+
+
+ Warning: fd not found. Offline mode enabled, skipping download.
+
+
+ Start the stream interrupt check.
+
+
+ STREAM_CHUNK_01
+
+ Operation aborted
+
+
+ Use the replacement plan.
+
+
+ STEERED_RESPONSE_FINISHED
+
+
+ Start the legacy key check.
+
+
+ LEGACY_CHUNK_01 LEGACY_CHUNK_02 LEGACY_CHUNK_03 LEGACY_CHUNK_04 LEGACY_CHUNK_05 LEGACY_CHUNK_06
+ LEGACY_CHUNK_07 LEGACY_CHUNK_08 LEGACY_CHUNK_09 LEGACY_CHUNK_10 LEGACY_CHUNK_11 LEGACY_CHUNK_12
+ LEGACY_CHUNK_13 LEGACY_CHUNK_14 LEGACY_CHUNK_15 LEGACY_CHUNK_16 LEGACY_CHUNK_17 LEGACY_CHUNK_18
+ LEGACY_CHUNK_19 LEGACY_CHUNK_20 LEGACY_CHUNK_21 LEGACY_STREAM_FINISHED
+
+
+ Send this as a legacy follow-up.
+
+
+ LEGACY_FOLLOWUP_FINISHED
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/y9/xyr_hns9259dy8mzf17jx9rh0000gn/T/pi-interrupt-steer-agent-o7TvhZ
+↑30 ↓15 0.0%/32k (auto)                                                                             free-model
+interrupt-steer-ready
+
+CSI-u during active tool call, before interrupt:
+ Start the stream interrupt check.
+
+
+ STREAM_CHUNK_01
+
+ Operation aborted
+
+
+ Use the replacement plan.
+
+
+ STEERED_RESPONSE_FINISHED
+
+
+ Start the legacy key check.
+
+
+ LEGACY_CHUNK_01 LEGACY_CHUNK_02 LEGACY_CHUNK_03 LEGACY_CHUNK_04 LEGACY_CHUNK_05 LEGACY_CHUNK_06
+ LEGACY_CHUNK_07 LEGACY_CHUNK_08 LEGACY_CHUNK_09 LEGACY_CHUNK_10 LEGACY_CHUNK_11 LEGACY_CHUNK_12
+ LEGACY_CHUNK_13 LEGACY_CHUNK_14 LEGACY_CHUNK_15 LEGACY_CHUNK_16 LEGACY_CHUNK_17 LEGACY_CHUNK_18
+ LEGACY_CHUNK_19 LEGACY_CHUNK_20 LEGACY_CHUNK_21 LEGACY_STREAM_FINISHED
+
+
+ Send this as a legacy follow-up.
+
+
+ LEGACY_FOLLOWUP_FINISHED
+
+
+ Start the slow tool check.
+
+
+
+ $ touch
+ "/var/folders/y9/xyr_hns9259dy8mzf17jx9rh0000gn/T/pi-interrupt-steer-agent-o7TvhZ/interrupt-steer-tool-start
+ ed"; sleep 60; touch
+ "/var/folders/y9/xyr_hns9259dy8mzf17jx9rh0000gn/T/pi-interrupt-steer-agent-o7TvhZ/interrupt-steer-tool-ended
+ "
+
+ Elapsed 0.0s
+
+
+── ⠙ Working ─────────────────────────────────────────────────────────────────────────────────────────────────
+Continue with the tool replacement.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/y9/xyr_hns9259dy8mzf17jx9rh0000gn/T/pi-interrupt-steer-agent-o7TvhZ
+↑40 ↓20 0.0%/32k (auto)                                                                             free-model
+interrupt-steer-ready
+
+CSI-u replacement response after tool abort:
+
+ STEERED_RESPONSE_FINISHED
+
+
+ Start the legacy key check.
+
+
+ LEGACY_CHUNK_01 LEGACY_CHUNK_02 LEGACY_CHUNK_03 LEGACY_CHUNK_04 LEGACY_CHUNK_05 LEGACY_CHUNK_06
+ LEGACY_CHUNK_07 LEGACY_CHUNK_08 LEGACY_CHUNK_09 LEGACY_CHUNK_10 LEGACY_CHUNK_11 LEGACY_CHUNK_12
+ LEGACY_CHUNK_13 LEGACY_CHUNK_14 LEGACY_CHUNK_15 LEGACY_CHUNK_16 LEGACY_CHUNK_17 LEGACY_CHUNK_18
+ LEGACY_CHUNK_19 LEGACY_CHUNK_20 LEGACY_CHUNK_21 LEGACY_STREAM_FINISHED
+
+
+ Send this as a legacy follow-up.
+
+
+ LEGACY_FOLLOWUP_FINISHED
+
+
+ Start the slow tool check.
+
+
+
+ $ touch
+ "/var/folders/y9/xyr_hns9259dy8mzf17jx9rh0000gn/T/pi-interrupt-steer-agent-o7TvhZ/interrupt-steer-tool-start
+ ed"; sleep 60; touch
+ "/var/folders/y9/xyr_hns9259dy8mzf17jx9rh0000gn/T/pi-interrupt-steer-agent-o7TvhZ/interrupt-steer-tool-ended
+ "
+
+ Command aborted
+
+ Took 0.1s
+
+
+ Error: This operation was aborted
+
+
+ Continue with the tool replacement.
+
+
+ TOOL_STEERED_RESPONSE_FINISHED
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/y9/xyr_hns9259dy8mzf17jx9rh0000gn/T/pi-interrupt-steer-agent-o7TvhZ
+↑50 ↓25 0.0%/32k (auto)                                                                             free-model
+interrupt-steer-ready
