@@ -6,7 +6,7 @@ const DEFAULT_KEY = "ctrl+alt+enter";
 const KEY_SETTING = { key: { default: DEFAULT_KEY, env: "PI_INTERRUPT_STEER_KEY" } } as const;
 type ShortcutKey = Parameters<ExtensionAPI["registerShortcut"]>[0];
 const IDLE_WAIT_TIMEOUT_MS = 5_000;
-const MESSAGE_ACCEPT_TIMEOUT_MS = 5_000;
+const MESSAGE_ACCEPT_TIMEOUT_MS = 60_000;
 const IDLE_POLL_INTERVAL_MS = 25;
 
 async function waitUntilIdle(ctx: ExtensionContext): Promise<boolean> {
@@ -42,12 +42,7 @@ function waitForAcceptedUserMessage(pi: ExtensionAPI, text: string): Promise<boo
 		};
 
 		unsubscribe = pi.on("message_start", (event) => {
-			if (event.message.role !== "user") return;
-			const content = event.message.content;
-			const messageText = typeof content === "string"
-				? content
-				: content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
-			if (messageText === text) finish(true);
+			if (event.message.role === "user") finish(true);
 		});
 		timeout = setTimeout(() => finish(false), MESSAGE_ACCEPT_TIMEOUT_MS);
 
@@ -66,7 +61,7 @@ async function sendEditorText(pi: ExtensionAPI, ctx: ExtensionContext, text: str
 	}
 
 	if (!await waitForAcceptedUserMessage(pi, text)) {
-		announce(ctx, "pi-interrupt-steer: could not confirm Pi accepted the message; text left in the editor", "warning");
+		announce(ctx, "pi-interrupt-steer: Pi has not started the message yet; text was kept. Check the transcript before sending it again.", "warning");
 		return;
 	}
 	if (ctx.ui.getEditorText() === text) ctx.ui.setEditorText("");
@@ -82,6 +77,7 @@ export default function registerInterruptSteer(pi: ExtensionAPI, settingsRuntime
 	const validKey = isShortcutKey(configuredKey);
 	const key: ShortcutKey = validKey ? configuredKey : DEFAULT_KEY;
 	let warnedAboutKey = false;
+	let inFlight = false;
 
 	pi.on("session_start", (_event, ctx) => {
 		if (!validKey && !warnedAboutKey) {
@@ -93,23 +89,33 @@ export default function registerInterruptSteer(pi: ExtensionAPI, settingsRuntime
 	pi.registerShortcut(key, {
 		description: "Interrupt the current run and send the editor text",
 		handler: async (ctx) => {
-			const idle = ctx.isIdle();
-			const text = ctx.ui.getEditorText();
-			if (idle) {
-				await sendEditorText(pi, ctx, text);
-				return;
-			}
-			if (!text && !ctx.hasPendingMessages()) {
-				announce(ctx, "pi-interrupt-steer: nothing to send", "info");
+			if (inFlight) {
+				announce(ctx, "pi-interrupt-steer: already waiting for Pi; this press did not send again", "info");
 				return;
 			}
 
-			ctx.abort();
-			if (!await waitUntilIdle(ctx)) {
-				announce(ctx, "pi-interrupt-steer: agent did not become idle within 5 seconds; text left in the editor", "warning");
-				return;
+			inFlight = true;
+			try {
+				const idle = ctx.isIdle();
+				const text = ctx.ui.getEditorText();
+				if (idle) {
+					await sendEditorText(pi, ctx, text);
+					return;
+				}
+				if (!text && !ctx.hasPendingMessages()) {
+					announce(ctx, "pi-interrupt-steer: nothing to send", "info");
+					return;
+				}
+
+				ctx.abort();
+				if (!await waitUntilIdle(ctx)) {
+					announce(ctx, "pi-interrupt-steer: agent did not become idle within 5 seconds; text left in the editor", "warning");
+					return;
+				}
+				await sendEditorText(pi, ctx, ctx.ui.getEditorText());
+			} finally {
+				inFlight = false;
 			}
-			await sendEditorText(pi, ctx, ctx.ui.getEditorText());
 		},
 	});
 }
