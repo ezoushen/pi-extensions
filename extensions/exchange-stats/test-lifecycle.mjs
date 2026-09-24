@@ -56,13 +56,13 @@ test("a session restart installs once, clears its prior folds, and restores on s
 		instance.start();
 		assert.equal(ToolExecutionComponent.prototype.render, firstWrapper);
 		instance.feed("old");
-		assert.match(renderTool("old"), /▸.*⚙1/);
+		assert.match(renderTool("old"), /▸.*⚙ 1/);
 		instance.stop();
 		assert.equal(ToolExecutionComponent.prototype.render, toolRender);
 		assert.equal(AssistantMessageComponent.prototype.updateContent, thinkingUpdate);
 		instance.start();
 		instance.feed("new");
-		assert.match(renderTool("new"), /▸.*⚙1/);
+		assert.match(renderTool("new"), /▸.*⚙ 1/);
 		assert.doesNotMatch(renderTool("old"), /▸/);
 	} finally { instance.stop(); }
 	assert.equal(ToolExecutionComponent.prototype.render, toolRender);
@@ -81,11 +81,11 @@ test("overlapping instances share one wrapper and only the last owner restores i
 		second.feed("second");
 		second.feedThinking("checking the second session");
 		assert.equal(ToolExecutionComponent.prototype.render, wrapper);
-		assert.match(renderTool("second"), /▸.*⚙1/);
+		assert.match(renderTool("second"), /▸.*⚙ 1/);
 		assert.equal(renderThinking("checking the second session").match(/Thinking/g)?.length, 1);
 		first.stop();
 		assert.equal(ToolExecutionComponent.prototype.render, wrapper);
-		assert.match(renderTool("second"), /▸.*⚙1/);
+		assert.match(renderTool("second"), /▸.*⚙ 1/);
 		assert.equal(renderThinking("checking the second session").match(/Thinking/g)?.length, 1);
 		second.stop();
 		assert.equal(ToolExecutionComponent.prototype.render, toolRender);
@@ -102,12 +102,12 @@ test("overlapping owners each render their own tool and thinking components", ()
 		second.start();
 		second.feed("second");
 		second.feedThinking("checking the second session", 400);
-		assert.match(renderTool("first"), /▸.*⚙1/);
+		assert.match(renderTool("first"), /▸.*⚙ 1/);
 		assert.doesNotMatch(renderTool("first"), /⚙ bash  first/);
-		assert.match(renderTool("second"), /▸.*⚙1/);
-		assert.match(renderThinking("checking the first session", 300), /▸.*◈1/);
+		assert.match(renderTool("second"), /▸.*⚙ 1/);
+		assert.match(renderThinking("checking the first session", 300), /▸.*◈ 1/);
 		assert.doesNotMatch(renderThinking("checking the first session", 300), /checking the first session/);
-		assert.match(renderThinking("checking the second session", 400), /▸.*◈1/);
+		assert.match(renderThinking("checking the second session", 400), /▸.*◈ 1/);
 	} finally { first.stop(); second.stop(); }
 });
 
@@ -120,9 +120,9 @@ test("owners with assistant messages at the same timestamp each render their own
 		second.feedThinking("checking the second session", 42);
 		second.toggleLatestProcess();
 		const firstLines = renderThinking("checking the first session", 42);
-		assert.match(firstLines, /▸ ◈1/);
+		assert.match(firstLines, /▸ ◈ 1/);
 		assert.doesNotMatch(firstLines, /▾/);
-		assert.match(renderThinking("checking the second session", 42), /▾ ◈1/);
+		assert.match(renderThinking("checking the second session", 42), /▾ ◈ 1/);
 	} finally { first.stop(); second.stop(); }
 });
 
@@ -134,7 +134,7 @@ test("a later wrapper stays installed and delegates to native output after shutd
 	function otherWrapper(width) { return foldWrapper.call(this, width); }
 	ToolExecutionComponent.prototype.render = otherWrapper;
 	instance.feed("wrapped");
-	assert.match(renderTool("wrapped"), /▸.*⚙1/);
+	assert.match(renderTool("wrapped"), /▸.*⚙ 1/);
 	instance.stop();
 	assert.equal(ToolExecutionComponent.prototype.render, otherWrapper);
 	assert.doesNotMatch(renderTool("wrapped"), /▸/);
@@ -144,6 +144,6 @@ test("a later wrapper stays installed and delegates to native output after shutd
 		next.feed("again");
 		assert.equal(ToolExecutionComponent.prototype.render, otherWrapper);
 		assert.doesNotMatch(renderTool("again"), /⚙ bash  again/);
-		assert.match(renderTool("again"), /▸.*⚙1/);
+		assert.match(renderTool("again"), /▸.*⚙ 1/);
 	} finally { next.stop(); ToolExecutionComponent.prototype.render = native; }
 });

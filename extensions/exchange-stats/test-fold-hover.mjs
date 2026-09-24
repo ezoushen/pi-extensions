@@ -46,12 +46,14 @@ test("hovering a process line highlights it and asks Pi to repaint", () => {
 		const lines = assistant.render(80);
 		const processRow = rowOf(lines, "▸ ◈");
 		assert.ok(processRow >= 0);
+		assert.match(plain(lines[processRow]), /▸ ◈ 1 ⚙ 1 ·/);
 		assert.match(lines[processRow], /\x1b\[3m/);
 		assert.match(lines[processRow], /\x1b\[38;5;1m/);
 		assert.doesNotMatch(lines.join("\n"), HOVER);
 		const result = assistant.handleMouse(move(processRow, lines.length));
 		assert.equal(result?.render, true, "a hover change requests a render");
 		const hovered = assistant.render(80);
+		assert.match(plain(hovered[processRow]), /▸ ◈ 1 ⚙ 1 ·/);
 		assert.match(hovered[processRow], HOVER);
 		assert.match(hovered[processRow], /\x1b\[3m/);
 		assert.match(hovered[processRow], /\x1b\[38;5;2m/);

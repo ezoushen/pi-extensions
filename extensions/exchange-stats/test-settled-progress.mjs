@@ -24,12 +24,12 @@ test("a settled answered exchange folds progress before its trailing text", () =
 	model.ingest(message(20, [{ type: "text", text: "answer" }]));
 	assert.equal(model.progressForItem("thinking:10:0"), undefined);
 	model.endExchange();
-	assert.equal(model.progressLine(1), "▸ Worked for 600ms · ◈1 ⚙1 · 1 note");
+	assert.equal(model.progressLine(1), "▸ Worked for 600ms · ◈ 1 ⚙ 1 · 1 note");
 	assert.deepEqual(model.progressForItem("thinking:10:0"), { exchange: 1, lead: true, open: false });
 	assert.deepEqual(model.progressForItem("text:10:1"), { exchange: 1, lead: false, open: false });
 	assert.equal(model.progressForItem("text:20:0"), undefined);
 	assert.equal(model.toggleLatestExchange(), true);
-	assert.equal(model.progressLine(1), "▾ Worked for 600ms · ◈1 ⚙1 · 1 note");
+	assert.equal(model.progressLine(1), "▾ Worked for 600ms · ◈ 1 ⚙ 1 · 1 note");
 });
 
 test("progress duration begins at the first process block when assistant text comes first", () => {
@@ -42,7 +42,7 @@ test("progress duration begins at the first process block when assistant text co
 	now = 1200;
 	model.ingest(message(13, [{ type: "text", text: "Here is the answer." }]));
 	model.endExchange();
-	assert.equal(model.progressLine(1), "▸ Worked for 100ms · ◈0 ⚙1 · 1 note");
+	assert.equal(model.progressLine(1), "▸ Worked for 100ms · ◈ 0 ⚙ 1 · 1 note");
 });
 
 test("exchanges without process blocks or trailing text do not fold", () => {
@@ -93,6 +93,7 @@ test("real Pi components show one settled progress line, then unwind native inte
 		const folded = rawLines();
 		const progressRow = folded.findIndex((line) => line.includes("Worked for"));
 		const answerRow = folded.findIndex((line) => line.includes("Final answer"));
+		assert.match(folded[progressRow].trim(), /· 2 notes$/);
 		assert.equal(answerRow - progressRow - 1, 1, JSON.stringify(folded));
 		const native = new AssistantMessageComponent();
 		native.updateContent(message(d.timestamp, d.content.map((part) => ({ ...part }))), false);
@@ -101,6 +102,7 @@ test("real Pi components show one settled progress line, then unwind native inte
 		model.toggleLatestExchange();
 		const expanded = lines();
 		assert.match(expanded[0], /▾ Worked for/);
+		assert.match(expanded[0].trim(), /· 2 notes$/);
 		const progressGlyphColumn = expanded[0].indexOf("▾");
 		assert.equal(expanded.find((line) => line.includes("Note A"))?.indexOf("│"), progressGlyphColumn);
 		assert.equal(expanded.find((line) => line.includes("Note B"))?.indexOf("│"), progressGlyphColumn);
@@ -112,6 +114,45 @@ test("real Pi components show one settled progress line, then unwind native inte
 		assert.equal(expanded.at(-1)?.indexOf("Final answer"), lines().at(-1)?.indexOf("Final answer"));
 		model.toggleLatestExchange();
 		assert.equal(lines().filter((line) => line.includes("Worked for")).length, 1);
+	} finally { thinkingPatch.restore(); toolPatch.restore(); }
+});
+
+test("real Pi components omit zero notes from folded and open settled progress", () => {
+	let now = 1000;
+	const model = new ToolFoldModel(() => now);
+	model.beginExchange(1);
+	const activity = message(105, [
+		{ type: "thinking", thinking: "Checking one file." },
+		{ type: "toolCall", id: "no-note", name: "read", arguments: { path: "file" } },
+	]);
+	const answer = message(106, [{ type: "text", text: "Final answer" }]);
+	model.ingest(activity);
+	now = 1300;
+	model.ingest(answer);
+	model.endExchange();
+	const thinkingPatch = installThinkingFold(AssistantMessageComponent, model);
+	const toolPatch = installToolFold(ToolExecutionComponent, model);
+	const assistant = (source) => {
+		const component = new AssistantMessageComponent();
+		component.updateContent(message(source.timestamp, source.content.map((part) => ({ ...part }))), false);
+		return component;
+	};
+	const components = [
+		assistant(activity),
+		new ToolExecutionComponent("read", "no-note", { path: "file" }, {}, undefined, { requestRender() {} }, "."),
+		assistant(answer),
+	];
+	const progressLine = () => {
+		const rows = components.flatMap((component) => component.render(80))
+			.map((line) => line.replace(/\x1b\][^\x07]*\x07/g, "").replace(/\x1b\[[0-9;]*m/g, ""))
+			.filter((line) => line.includes("Worked for"));
+		assert.equal(rows.length, 1);
+		return rows[0].trim();
+	};
+	try {
+		assert.equal(progressLine(), "▸ Worked for 300ms · ◈ 1 ⚙ 1");
+		assert.equal(model.toggleLatestExchange(), true);
+		assert.equal(progressLine(), "▾ Worked for 300ms · ◈ 1 ⚙ 1");
 	} finally { thinkingPatch.restore(); toolPatch.restore(); }
 });
 
@@ -191,9 +232,12 @@ test("the progress row supports click, hover, cursor selection, and narrow width
 	model.beginExchange(1);
 	const source = message(401, [
 		{ type: "thinking", thinking: "Inspecting files." },
-		{ type: "text", text: "I found the answer." },
+		{ type: "text", text: "I am still checking." },
+		{ type: "toolCall", id: "progress-one-note", name: "read", arguments: { path: "file" } },
 	]);
+	const answer = message(402, [{ type: "text", text: "I found the answer." }]);
 	model.ingest(message(source.timestamp, source.content.map((part) => ({ ...part }))));
+	model.ingest(message(answer.timestamp, answer.content.map((part) => ({ ...part }))));
 	model.endExchange();
 	const theme = () => ({
 		fg(color, text) { return `${color === "accent" ? "\x1b[31m" : color === "muted" ? "\x1b[33m" : "\x1b[2m"}${text}\x1b[0m`; },
@@ -201,21 +245,37 @@ test("the progress row supports click, hover, cursor selection, and narrow width
 		italic(text) { return `\x1b[3m${text}\x1b[23m`; },
 	});
 	const patch = installThinkingFold(AssistantMessageComponent, model, theme);
+	const toolPatch = installToolFold(ToolExecutionComponent, model, theme);
 	try {
 		const component = new AssistantMessageComponent();
 		component.updateContent(message(source.timestamp, source.content.map((part) => ({ ...part }))), false);
+		const answerComponent = new AssistantMessageComponent();
+		answerComponent.updateContent(message(answer.timestamp, answer.content.map((part) => ({ ...part }))), false);
+		const tool = new ToolExecutionComponent("read", "progress-one-note", { path: "file" }, {}, undefined, { requestRender() {} }, ".");
 		const region = component.contentContainer.children.find((child) => child.constructor.name === "MouseRegion");
+		const progressLine = () => {
+			const lines = [component, tool, answerComponent].flatMap((item) => item.render(80))
+				.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""))
+				.filter((line) => line.includes("Worked for"));
+			assert.equal(lines.length, 1);
+			return lines[0].trim();
+		};
+		assert.equal(progressLine(), "▸ Worked for 0ms · ◈ 1 ⚙ 1 · 1 note");
+		const narrowProgress = component.render(18).map((line) => line.replace(/\x1b\[[0-9;]*m/g, "")).find((line) => line.includes("▸"));
+		assert.match(narrowProgress ?? "", /…/);
 		assert.match(component.render(18).join("\n"), /\x1b\[2m.*\x1b\[3m|\x1b\[3m.*\x1b\[2m/);
+		assert.match(answerComponent.render(80).join("\n"), /I found the answer/);
 		assert.ok(model.startCursor());
 		assert.equal(model.cursorTitle(), model.progressLine(1));
-		assert.match(component.render(18).join("\n"), /\x1b\[31m.*Worked/);
-		assert.match(component.render(18).join("\n"), /\x1b\[3m/);
+		assert.match(component.render(30).join("\n"), /\x1b\[31m.*Worked/);
+		assert.match(component.render(30).join("\n"), /\x1b\[3m/);
 		model.cursorToggle();
 		assert.match(model.progressLine(1), /^▾/);
 		model.cursorToggle();
 		model.stopCursor();
 		const hover = region.handleMouse({ type: "move", button: "", y: 0, width: 18, height: 1 });
 		assert.equal(hover?.handled, true);
+		assert.equal(progressLine(), "▸ Worked for 0ms · ◈ 1 ⚙ 1 · 1 note");
 		assert.match(component.render(18).join("\n"), /\x1b\[48;5;24m/);
 		assert.match(component.render(18).join("\n"), /\x1b\[33m/);
 		assert.match(component.render(18).join("\n"), /\x1b\[3m/);
@@ -223,7 +283,7 @@ test("the progress row supports click, hover, cursor selection, and narrow width
 		assert.equal(click?.handled, true);
 		assert.match(model.progressLine(1), /^▾/);
 		assert.ok(component.render(18).every((row) => visibleWidth(row) <= 18));
-	} finally { patch.restore(); }
+	} finally { patch.restore(); toolPatch.restore(); }
 });
 
 test("the progress control works when interim assistant text is its first item", () => {

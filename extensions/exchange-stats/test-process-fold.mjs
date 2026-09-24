@@ -36,7 +36,7 @@ test("a live process switches to a running tool and retains wall time after clos
 	model.ingest(thinking);
 	model.observeThinking(thinking, { type: "thinking_delta", contentIndex: 0, delta: "checking" });
 	const process = model.processes()[0];
-	assert.match(model.processLine(process.id), /◈1 ⚙0.*◈ Thinking/);
+	assert.match(model.processLine(process.id), /◈ 1 ⚙ 0.*◈ Thinking/);
 	now = 2200;
 	const withTool = { role: "assistant", timestamp: 201, content: [
 		{ type: "thinking", thinking: "checking" },
@@ -46,11 +46,11 @@ test("a live process switches to a running tool and retains wall time after clos
 	model.ingest(withTool);
 	model.start("call-live", "bash");
 	now = 3200;
-	assert.match(model.processLine(process.id), /◈1 ⚙1.*⚙ bash running 1\.0s/);
+	assert.match(model.processLine(process.id), /◈ 1 ⚙ 1.*⚙ bash running 1\.0s/);
 	model.end("call-live", false, undefined, now);
 	model.ingest({ role: "assistant", timestamp: 202, content: [{ type: "text", text: "done" }] });
 	now = 9000;
-	assert.match(model.processLine(process.id), /◈1 ⚙1.*2\.2s/);
+	assert.match(model.processLine(process.id), /◈ 1 ⚙ 1.*2\.2s/);
 	assert.equal(model.toggleProcess(process.id), true);
 	assert.equal(model.isProcessOpen(process.id), true);
 });
@@ -61,10 +61,10 @@ test("a tool-led process shows its queued tool without a time before execution s
 	model.beginExchange(1);
 	model.ingest({ role: "assistant", timestamp: 301, content: [{ type: "toolCall", id: "call-q", name: "bash", arguments: { command: "pwd" } }] });
 	const process = model.processes()[0];
-	assert.equal(model.processLine(process.id), "▸ ◈0 ⚙1 · ⚙ bash queued");
+	assert.equal(model.processLine(process.id), "▸ ◈ 0 ⚙ 1 · ⚙ bash queued");
 	model.start("call-q", "bash");
 	now = 6500;
 	assert.match(model.processLine(process.id), /⚙ bash running 1\.5s/);
 	model.end("call-q", false, undefined, now);
-	assert.equal(model.processLine(process.id), "▸ ◈0 ⚙1 · 1.5s");
+	assert.equal(model.processLine(process.id), "▸ ◈ 0 ⚙ 1 · 1.5s");
 });

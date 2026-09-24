@@ -3,16 +3,18 @@
 Show timing, token, cache, cost, and tool-use statistics for each Pi exchange.
 Each run of thinking and tool calls between pieces of assistant text starts folded
 as one process line, even when it spans assistant messages or turns. The line shows
-block counts and total wall time, or the current block and its live time while
-streaming. In the running exchange, a tool call that has streamed but not yet started
-shows as `⚙ <tool> queued`. A call whose exchange settled, or was restored, without a
-result shows `no result` in its title and no live activity. At the next fold level, each block has a one-line title in stream order, with dim `├` and `└` guides under its process line and `│` continuing through rows with later siblings.
+thinking and tool counts as `◈ n` and `⚙ m`, plus total wall time, or the current
+block and its live time while streaming. In the running exchange, a tool call that
+has streamed but not yet started shows as `⚙ <tool> queued`. A call whose exchange
+settled, or was restored, without a result shows `no result` in its title and no
+live activity. At the next fold level, each block has a one-line title in stream order, with dim `├` and `└` guides under its process line and `│` continuing through rows with later siblings.
 While an exchange streams, assistant text stays visible. After it settles, an
 exchange with a process and a trailing answer folds its processes and earlier
 assistant text into one dim progress line at the first progress item. Opening that
 line shows the process lines and earlier text beneath it, grouped by dim tree guides;
-the trailing answer stays visible without a guide. An exchange without a process or a
-trailing answer keeps its existing rows.
+the trailing answer stays visible without a guide. Its `1 note` or `N notes` segment
+counts interim text items and is omitted when there are none. An exchange without a
+process or a trailing answer keeps its existing rows.
 Tool titles show the argument, status, duration, and result line count. Thinking
 titles show the trace's last complete sentence, or `Thinking` until one completes.
 With `summaryModel` configured, a short model headline takes its place when ready;
