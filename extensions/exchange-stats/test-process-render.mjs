@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AssistantMessageComponent, ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { ToolFoldModel } from "./src/tool-fold.ts";
 import { installThinkingFold, installToolFold } from "./src/tool-render.ts";
 
@@ -36,6 +37,7 @@ test("real Pi components show one line per process, preserve text, and reopen L2
 		const lines = () => components.flatMap((component) => component.render(100)).filter((line) => line.trim());
 		const l1 = lines().join("\n");
 		assert.equal((l1.match(/▸ ◈/g) ?? []).length, 2);
+		assert.match(l1, /▸ ◈ 1 ⚙ 0 ·/);
 		assert.doesNotMatch(l1, /⚙ read.*running/);
 		assert.match(l1, /First answer/);
 		assert.match(l1, /Final answer/);
@@ -52,6 +54,7 @@ test("real Pi components show one line per process, preserve text, and reopen L2
 		model.toggleProcess(second.id);
 		const l2 = lines().join("\n");
 		assert.equal((l2.match(/▾ ◈/g) ?? []).length, 1);
+		assert.match(l2, /▾ ◈ 1 ⚙ 3 ·/);
 		assert.match(l2, /⚙ bash.*pwd/);
 		assert.match(l2, /⚙ read.*one/);
 		const detail = lines().map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trim().replace(/^(?:[│├└] )+/, "").trimStart());
@@ -105,7 +108,7 @@ test("fresh streaming snapshots move the process line from thinking to the runni
 		model.observeThinking(first, { type: "thinking_delta", contentIndex: 0, delta: "checking" });
 		model.ingest(first);
 		assistant.updateContent(snapshot(301, [{ type: "thinking", thinking: "checking" }]), true);
-		assert.match(assistant.render(100).join("\n"), /▸ ◈1 ⚙0.*◈ Thinking/);
+		assert.match(assistant.render(100).join("\n"), /▸ ◈ 1 ⚙ 0.*◈ Thinking/);
 		now = 1500;
 		const second = snapshot(301, [
 			{ type: "thinking", thinking: "checking" },
@@ -117,11 +120,16 @@ test("fresh streaming snapshots move the process line from thinking to the runni
 		assistant.updateContent(snapshot(301, second.content.map((item) => ({ ...item }))), true);
 		const tool = new ToolExecutionComponent("bash", "live", { command: "pwd" }, {}, undefined, ui, ".");
 		now = 2500;
-		assert.match(assistant.render(100).join("\n"), /▸ ◈1 ⚙1.*⚙ bash running 1\.0s/);
+		assert.match(assistant.render(100).join("\n"), /▸ ◈ 1 ⚙ 1.*⚙ bash running 1\.0s/);
 		assert.deepEqual(tool.render(100), []);
+		const truncated = assistant.render(22).find((line) => line.includes("▸ ◈"));
+		assert.ok(truncated);
+		assert.match(truncated, /▸ ◈ 1 ⚙ 1/);
+		assert.match(truncated, /…/);
+		assert.ok(visibleWidth(truncated) <= 22);
 		model.end("live", false, undefined, now);
 		model.ingest(snapshot(302, [{ type: "text", text: "Answer" }]));
 		now = 9000;
-		assert.match(assistant.render(100).join("\n"), /▸ ◈1 ⚙1.*1\.5s/);
+		assert.match(assistant.render(100).join("\n"), /▸ ◈ 1 ⚙ 1.*1\.5s/);
 	} finally { thinkingPatch.restore(); toolPatch.restore(); }
 });

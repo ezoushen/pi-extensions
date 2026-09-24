@@ -379,7 +379,8 @@ export class ToolFoldModel {
 	progressLine(exchange: number): string {
 		const progress = this.progress.get(exchange);
 		if (!progress) return "";
-		return `${progress.open ? "▾" : "▸"} Worked for ${elapsed(progress.durationMs)} · ◈${progress.thinking} ⚙${progress.tools} · ${progress.notes} ${progress.notes === 1 ? "note" : "notes"}`;
+		const notes = progress.notes ? ` · ${progress.notes} ${progress.notes === 1 ? "note" : "notes"}` : "";
+		return `${progress.open ? "▾" : "▸"} Worked for ${elapsed(progress.durationMs)} · ◈ ${progress.thinking} ⚙ ${progress.tools}${notes}`;
 	}
 	toggleProgress(exchange: number): boolean | undefined {
 		const progress = this.progress.get(exchange);
@@ -536,7 +537,7 @@ export class ToolFoldModel {
 				? `⚙ ${tool?.name ?? "tool"} running ${elapsed(this.now() - timing.start)}`
 				: this.thinking.title(block.message, block.index, block.trace, true);
 		}
-		const count = `◈${process.blocks.filter((block) => block.kind === "thinking").length} ⚙${process.blocks.filter((block) => block.kind === "tool").length}`;
+		const count = `◈ ${process.blocks.filter((block) => block.kind === "thinking").length} ⚙ ${process.blocks.filter((block) => block.kind === "tool").length}`;
 		const total = first === undefined || last === undefined ? "0ms" : elapsed(Math.max(0, last - first));
 		return `${process.open ? "▾" : "▸"} ${count} · ${activity || queued || total}`;
 	}

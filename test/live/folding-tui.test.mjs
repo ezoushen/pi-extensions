@@ -75,7 +75,11 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		writeFileSync(firstPath, "FIRST_NATIVE_OUTPUT\n");
 		writeFileSync(secondPath, "SECOND_NATIVE_OUTPUT\n");
 		stub = await startStubProvider((request, requestNumber) => {
-			if (requestNumber === 1) {
+			if (requestNumber === 1) return { steps: [
+				{ delta: { reasoning_content: "I am checking one result. " } },
+				{ delayMs: 300, delta: { content: "The single-step result is ready.\n" } },
+			] };
+			if (requestNumber === 2) {
 				assert.ok(request.tools?.some((tool) => tool.function?.name === "read"), "Pi did not offer read tool");
 				return { finishReason: "tool_calls", steps: [
 					{ delta: { reasoning_content: "I am inspecting the first item. " } },
@@ -116,6 +120,14 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		let errors = "";
 		child.stderr.on("data", (data) => { errors += data; });
 		await waitForScreen(terminal, (value) => value.includes("⏱ ready") && value.includes("free-model"), child);
+		send(child, "Give one short result.\r");
+		const singleSettled = await waitForScreen(terminal, (value) =>
+			value.includes("The single-step result is ready.") && value.includes("Exchange 1") && /▸ Worked for .*◈ 1 ⚙ 0/.test(value), child, 20000);
+		const singleProgress = singleSettled.split("\n").find((line) => line.includes("▸ Worked for"));
+		assert.ok(singleProgress, "single-step screen is missing its folded progress line");
+		assert.match(singleProgress, /◈ 1 ⚙ 0/);
+		assert.doesNotMatch(singleProgress, /notes?/);
+
 		send(child, "Check both files and summarize them.\r");
 		const firstLive = await waitForScreen(terminal, (value) => /▸.*◈.*\d(?:\.\d)?s/.test(value), child, 15000);
 		const secondLive = await waitForScreen(terminal, (value) => {
@@ -125,9 +137,9 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		}, child, 15000);
 		assert.match(secondLive, /▸.*◈/);
 		const settled = await waitForScreen(terminal, (value) =>
-			value.includes("Both file contents are available.") && value.includes("Exchange 1") &&
+			value.includes("Both file contents are available.") && value.includes("Exchange 2") &&
 			(value.match(/▸.*◈/g)?.length ?? 0) >= 1, child, 20000);
-		const exchangeHeadline = settled.split("\n").find((line) => line.includes("⏱ Exchange 1"));
+		const exchangeHeadline = settled.split("\n").find((line) => line.includes("⏱ Exchange 2"));
 		assert.ok(exchangeHeadline, "settled screen is missing the exchange card headline");
 		const capturedAt = Date.now();
 		// PTY redraw can cross a second boundary after the exchange has settled.
@@ -148,22 +160,22 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		assert.doesNotMatch(levelTwo, /FIRST_NATIVE_OUTPUT|SECOND_NATIVE_OUTPUT/);
 		send(child, "\x1b\x13");
 		await waitForScreen(terminal, (value) => value.includes("Fold exchange / process / block"), child);
-		for (let i = 0; i < 4; i++) { send(child, "\x1b[B"); await new Promise((resolve) => setTimeout(resolve, 80)); }
+		for (let i = 0; i < 7; i++) { send(child, "\x1b[B"); await new Promise((resolve) => setTimeout(resolve, 80)); }
 		send(child, "\r");
 		send(child, "\x1b");
 		const opened = await waitForScreen(terminal, (value) => value.includes("FIRST_NATIVE_OUTPUT"), child);
 		assert.doesNotMatch(opened, /SECOND_NATIVE_OUTPUT/);
-		assert.match(opened, /▸ ◈1 ⚙0/);
+		assert.match(opened, /▸ ◈ 1 ⚙ 0/);
 		assert.match(opened, /second\.txt/);
 		assert.match(opened, /I will read both files/);
 		assert.match(opened, /Both file contents are available/);
-		assert.match(opened, /Exchange 1/);
+		assert.match(opened, /Exchange 2/);
 		assert.match(opened, /├/);
 		assert.match(opened, /└/);
 		assert.match(opened, /│/);
 		if (evidencePath) {
 			mkdirSync(dirname(evidencePath), { recursive: true });
-			writeFileSync(evidencePath, opened + "\n");
+			writeFileSync(evidencePath, `single-step settled with zero notes:\n${singleSettled}\n\nunwound multi-step exchange:\n${opened}\n`);
 			assert.match(ansiCapture, /\x1b\[3m/, "live ANSI capture does not include italic styling");
 		}
 		assert.ok(!errors, errors);

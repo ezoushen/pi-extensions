@@ -269,7 +269,7 @@ test("compaction and tree rebuild remove prior processes from the picker and kee
 		assert.match(picker.render(100).join("\n"), /kept/);
 		picker.handleInput("\x1b[B");
 		picker.handleInput("\r");
-		assert.match(picker.render(100).join("\n"), /▾.*⚙1/);
+		assert.match(picker.render(100).join("\n"), /▾.*⚙ 1/);
 		entries.splice(2, 1, entry(303, "branch"));
 		mounted.handlers.get("session_tree")({}, mounted.ctx);
 		await mounted.shortcuts.get("ctrl+alt+s")(mounted.ctx);
@@ -278,7 +278,7 @@ test("compaction and tree rebuild remove prior processes from the picker and kee
 		assert.match(picker.render(100).join("\n"), /branch/);
 		picker.handleInput("\x1b[B");
 		picker.handleInput("\r");
-		assert.match(picker.render(100).join("\n"), /▾.*⚙1/);
+		assert.match(picker.render(100).join("\n"), /▾.*⚙ 1/);
 	} finally { mounted.close(); }
 });
 
