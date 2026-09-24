@@ -104,6 +104,10 @@ test("real Pi components show one settled progress line, then unwind native inte
 		assert.ok(expanded.find((line) => line.includes("Note A"))?.startsWith("   "));
 		assert.ok(expanded.find((line) => line.includes("Note B"))?.startsWith("   "));
 		assert.ok(expanded.find((line) => line.includes("▸ ◈"))?.startsWith("   "));
+		const expandedRows = rawLines();
+		const expandedProgress = expandedRows.findIndex((line) => line.includes("Worked for"));
+		const firstProcess = expandedRows.findIndex((line, index) => index > expandedProgress && line.includes("▸ ◈"));
+		assert.equal(firstProcess - expandedProgress - 1, 1, JSON.stringify(expandedRows));
 		assert.equal(expanded.at(-1)?.indexOf("Final answer"), lines().at(-1)?.indexOf("Final answer"));
 		model.toggleLatestExchange();
 		assert.equal(lines().filter((line) => line.includes("Worked for")).length, 1);
@@ -231,6 +235,10 @@ test("the progress control works when interim assistant text is its first item",
 		assert.match(component.render(80).join("\n"), /▸ Worked for/);
 		const clicked = component.handleMouse({ type: "click", button: "left", y: 1, width: 80, height: 1 });
 		assert.equal(clicked?.handled, true);
-		assert.match(component.render(80).join("\n"), /▾ Worked for/);
+		const expanded = component.render(80).map((line) => line.replace(/\x1b\][^\x07]*\x07/g, "").replace(/\x1b\[[0-9;]*m/g, ""));
+		assert.match(expanded.join("\n"), /▾ Worked for/);
+		const progressRow = expanded.findIndex((line) => line.includes("Worked for"));
+		const firstText = expanded.findIndex((line, index) => index > progressRow && line.includes("I will inspect the file."));
+		assert.equal(firstText - progressRow - 1, 1, JSON.stringify(expanded));
 	} finally { patch.restore(); }
 });
