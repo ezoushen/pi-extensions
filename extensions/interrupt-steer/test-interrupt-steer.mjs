@@ -58,6 +58,8 @@ function createHarness({
 	sendError,
 	preflightFailure = false,
 	acceptanceText,
+	acceptanceContentType = "parts",
+	unrelatedMessageText,
 	handledPrompt = false,
 	acceptanceDelayMs = 0,
 	busyPollsAfterAbort = 2,
@@ -68,6 +70,17 @@ function createHarness({
 	const events = new Map();
 	const sent = [];
 	const notifications = [];
+	const emitUserMessage = (content) => {
+		calls.push("message_start");
+		for (const handler of events.get("message_start") ?? []) handler({
+			type: "message_start",
+			message: {
+				role: "user",
+				content,
+				timestamp: Date.now(),
+			},
+		}, ctx);
+	};
 	let currentText = editorText;
 	let agentIdle = idle;
 	let pollsUntilIdle;
@@ -85,21 +98,30 @@ function createHarness({
 		sendUserMessage(content, options) {
 			calls.push("sendUserMessage");
 			const send = async () => {
-				await new Promise((resolve) => setTimeout(resolve, acceptanceDelayMs));
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				if (unrelatedMessageText !== undefined) {
+					emitUserMessage([{ type: "text", text: unrelatedMessageText }]);
+				}
 				if (preflightFailure) throw new Error("model preflight failed");
-				if (sendError) throw sendError;
+				if (sendError) {
+					calls.push("sendFailure");
+					throw sendError;
+				}
 				if (handledPrompt) return;
+				if (acceptanceDelayMs > 0) {
+					await new Promise((resolve) => setTimeout(resolve, acceptanceDelayMs));
+				}
 				const acceptedText = acceptanceText ?? content;
 				sent.push({ content: acceptedText, options });
-				calls.push("message_start");
-				for (const handler of events.get("message_start") ?? []) handler({
-					type: "message_start",
-					message: {
-						role: "user",
-						content: [{ type: "text", text: acceptedText }],
-						timestamp: Date.now(),
-					},
-				}, ctx);
+				const messageContent = acceptanceContentType === "string"
+					? acceptedText
+					: acceptanceContentType === "split-parts"
+						? [
+							{ type: "text", text: acceptedText.slice(0, Math.floor(acceptedText.length / 2)) },
+							{ type: "text", text: acceptedText.slice(Math.floor(acceptedText.length / 2)) },
+						]
+						: [{ type: "text", text: acceptedText }];
+				emitUserMessage(messageContent);
 			};
 			void send().catch(() => {});
 		},
@@ -318,7 +340,57 @@ test("post-abort shortcut keeps Pi-restored text when Pi fails asynchronously be
 	});
 });
 
-test("a transformed prompt is accepted when Pi starts a user message", async () => {
+test("an unrelated user message before asynchronous send failure keeps the editor text", async () => {
+	await withFakeClock(async ({ advanceBy }) => {
+		const harness = createHarness({
+			editorText: "keep this prompt",
+			idle: true,
+			unrelatedMessageText: "queued compaction message",
+			sendError: new Error("send failed"),
+		});
+		registerInterruptSteer(harness.pi);
+
+		const pending = harness.shortcuts.get("ctrl+alt+enter").handler(harness.ctx);
+		await advanceBy(0);
+		await advanceBy(60_000);
+		await pending;
+
+		assert.ok(harness.calls.indexOf("message_start") < harness.calls.indexOf("sendFailure"));
+		assert.deepEqual(harness.sent, []);
+		assert.equal(harness.editorText, "keep this prompt");
+		assert.equal(harness.notifications.length, 1);
+		assert.equal(harness.notifications[0].level, "warning");
+	});
+});
+
+test("an unrelated user message is ignored until the matching message starts", async () => {
+	for (const acceptanceContentType of ["string", "split-parts"]) {
+		await withFakeClock(async ({ advanceBy }) => {
+			const harness = createHarness({
+				editorText: "matching prompt",
+				idle: true,
+				unrelatedMessageText: "queued compaction message",
+				acceptanceContentType,
+				acceptanceDelayMs: 10,
+			});
+			registerInterruptSteer(harness.pi);
+
+			const pending = harness.shortcuts.get("ctrl+alt+enter").handler(harness.ctx);
+			await advanceBy(0);
+			assert.equal(harness.editorText, "matching prompt");
+			assert.deepEqual(harness.notifications, []);
+
+			await advanceBy(10);
+			await pending;
+
+			assert.deepEqual(harness.sent, [{ content: "matching prompt", options: undefined }]);
+			assert.equal(harness.editorText, "");
+			assert.deepEqual(harness.notifications, []);
+		});
+	}
+});
+
+test("a transformed prompt is sent but the editor text is kept with a warning", async () => {
 	await withFakeClock(async ({ advanceBy }) => {
 		const harness = createHarness({
 			editorText: "original prompt",
@@ -330,19 +402,16 @@ test("a transformed prompt is accepted when Pi starts a user message", async () 
 
 		const pending = shortcut.handler(harness.ctx);
 		await advanceBy(0);
-		const accepted = harness.editorText === "";
-		if (!accepted) await advanceBy(60_000);
+		const clearedBeforeTimeout = harness.editorText === "";
+		await advanceBy(60_000);
 		await pending;
 
 		assert.deepEqual(harness.sent, [{ content: "transformed prompt", options: undefined }]);
-		assert.equal(accepted, true);
-		assert.deepEqual(harness.notifications, []);
-
-		await shortcut.handler(harness.ctx);
-		assert.deepEqual(harness.notifications, [{
-			message: "pi-interrupt-steer: nothing to send",
-			level: "info",
-		}]);
+		assert.equal(clearedBeforeTimeout, false);
+		assert.equal(harness.editorText, "original prompt");
+		assert.equal(harness.notifications.length, 1);
+		assert.equal(harness.notifications[0].level, "warning");
+		assert.match(harness.notifications[0].message, /has not started the message yet.*text was kept.*check the transcript before sending it again/i);
 	});
 });
 
