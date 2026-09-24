@@ -1,5 +1,5 @@
 // A minimal OpenAI-compatible chat-completions stub for live-session and
-// exchange-stats model tests. Started and stopped by each caller, on an
+// focus-mode model tests. Started and stopped by each caller, on an
 // OS-assigned loopback port -- it is a fixture, not a server, and it never
 // reaches an inference lane. Every request body is recorded verbatim so the
 // test can assert on what pi's extensions actually put on the wire.

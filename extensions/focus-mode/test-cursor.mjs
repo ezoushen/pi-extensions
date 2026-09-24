@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
 import { KEYBINDINGS } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
-import { registerExchangeStats } from "./exchange-stats.ts";
+import { registerExchangeStats } from "./focus-mode.ts";
 
 initTheme("dark");
 const item = (id) => ({ type: "toolCall", id, name: "bash", arguments: { command: id } });
@@ -13,7 +13,7 @@ const snapshot = (content) => ({ role: "assistant", timestamp: 81, content: cont
 
 function mount(value) {
  const dir = mkdtempSync(join(tmpdir(), "pi-cursor-"));
- if (value !== undefined) writeFileSync(join(dir, "exchange-stats.json"), JSON.stringify(value));
+ if (value !== undefined) writeFileSync(join(dir, "focus-mode.json"), JSON.stringify(value));
  const handlers = new Map(), shortcuts = new Map(), statuses = [];
  const editor = { focused: true, input: "", handleInput(char) { this.input += char; } };
  let cursor;

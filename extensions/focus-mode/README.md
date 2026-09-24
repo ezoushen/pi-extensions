@@ -1,4 +1,4 @@
-# pi-exchange-stats
+# pi-focus-mode
 
 Show timing, token, cache, cost, and tool-use statistics for each Pi exchange.
 Each run of thinking and tool calls between pieces of assistant text starts folded
@@ -128,29 +128,38 @@ The timings are measured locally, then saved in exchange entries. They do not
 claim provider-side queue time, exclusive model compute time, or billing beyond
 the usage object Pi received.
 
+## Compatibility
+
+Uninstall `pi-exchange-stats` before installing `pi-focus-mode`; both packages
+must not be loaded together. The published `pi-exchange-stats@0.1.0` had no
+settings or environment variables, so no settings migration is needed. Existing
+sessions remain readable through their `exchange-stats` and
+`exchange-stats-headline` entries. The `/exstats` command and `exchange` status
+key stay unchanged.
+
 ## Settings
 
-The optional `exchange-stats.json` file in Pi's agent directory configures
+The optional `focus-mode.json` file in Pi's agent directory configures
 `processKey`, `exchangeKey`, and `pickerKey`. Their defaults are `ctrl+alt+f`,
 `ctrl+alt+e`, and `ctrl+alt+s`. The experimental `cursorKey` defaults to
 `ctrl+alt+g`. Each key value must be a modified Pi key such as
 `ctrl+alt+x` or `alt+enter`; an invalid value uses its default and produces one warning.
-The matching environment variables are `PI_EXCHANGE_STATS_PROCESS_KEY`,
-`PI_EXCHANGE_STATS_EXCHANGE_KEY`, `PI_EXCHANGE_STATS_PICKER_KEY`, and
-`PI_EXCHANGE_STATS_CURSOR_KEY`. Set `cursorMode` to the boolean `true` in the same
-file, or set `PI_EXCHANGE_STATS_CURSOR_MODE=true`, to register the cursor shortcut.
-It is off by default. A project's `.pi/exchange-stats.json` is not read for the keys
+The matching environment variables are `PI_FOCUS_MODE_PROCESS_KEY`,
+`PI_FOCUS_MODE_EXCHANGE_KEY`, `PI_FOCUS_MODE_PICKER_KEY`, and
+`PI_FOCUS_MODE_CURSOR_KEY`. Set `cursorMode` to the boolean `true` in the same
+file, or set `PI_FOCUS_MODE_CURSOR_MODE=true`, to register the cursor shortcut.
+It is off by default. A project's `.pi/focus-mode.json` is not read for the keys
 or `cursorMode`, even in a trusted project.
 
 Set `summaryModel` to a `provider/modelId` registered in Pi's model registry.
-It is off by default. Put it in `<agentDir>/exchange-stats.json`, or in a trusted
-project's `.pi/exchange-stats.json`. For example:
+It is off by default. Put it in `<agentDir>/focus-mode.json`, or in a trusted
+project's `.pi/focus-mode.json`. For example:
 
 ```json
 { "summaryModel": "my-provider/my-headline-model" }
 ```
 
-`PI_EXCHANGE_STATS_SUMMARY_MODEL` overrides the file setting. While thinking
+`PI_FOCUS_MODE_SUMMARY_MODEL` overrides the file setting. While thinking
 streams, the extension sends at most the last 1,500 trace characters after about
 400 new tokens or six seconds, and once more when the block ends. Requests use
 reasoning off and a 32 token output cap. The model call never delays the turn or
@@ -172,12 +181,12 @@ For a development install, do not load this package from a path whose
 the display patch land on those private component classes rather than the classes
 used by the running Pi. Stage the built package files outside such a tree, or
 `npm pack` this package and install the tarball with
-`pi install npm:pi-exchange-stats@file:/absolute/path/to/pi-exchange-stats-0.1.0.tgz`.
+`pi install npm:pi-focus-mode@file:/absolute/path/to/pi-focus-mode-0.1.0.tgz`.
 
 ## Install and verify
 
 ```sh
-pi install npm:pi-exchange-stats
+pi install npm:pi-focus-mode
 ```
 
 Submit a prompt that makes at least one tool call and produces thinking. While it

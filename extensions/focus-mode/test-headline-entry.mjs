@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { AssistantMessageComponent, initTheme } from "@earendil-works/pi-coding-agent";
-import { registerExchangeStats } from "./exchange-stats.ts";
+import { registerExchangeStats } from "./focus-mode.ts";
 
 initTheme("dark");
 
@@ -39,7 +39,7 @@ test("unset summaryModel never looks up a model or sends a request", () => {
 test("unknown configured model is announced once and thinking keeps its fallback", () => {
 	const dir = mkdtempSync(join(tmpdir(), "pi-headline-entry-"));
 	try {
-		writeFileSync(join(dir, "exchange-stats.json"), JSON.stringify({ summaryModel: "stub/missing" }));
+		writeFileSync(join(dir, "focus-mode.json"), JSON.stringify({ summaryModel: "stub/missing" }));
 		const mounted = mount(dir, { find: () => undefined });
 		mounted.handlers.get("session_start")({}, mounted.ctx);
 		const message = { role: "assistant", timestamp: 2, content: [{ type: "thinking", thinking: "Checking the setting. More unfinished text" }] };
@@ -49,6 +49,7 @@ test("unknown configured model is announced once and thinking keeps its fallback
 		assert.match(component.render(80).join("\n"), /Checking the setting\./);
 		assert.doesNotMatch(component.render(80).join("\n"), /≈/);
 		assert.equal(mounted.notifications.filter((text) => text.includes("stub/missing")).length, 1);
+		assert.match(mounted.notifications[0], /^focus-mode:/);
 		mounted.handlers.get("session_shutdown")({}, mounted.ctx);
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -73,7 +74,7 @@ for (const { name, response, expected } of [
 	test(`${name} announces one actionable line and keeps the trace headline`, async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pi-headline-entry-"));
 		try {
-			writeFileSync(join(dir, "exchange-stats.json"), JSON.stringify({ summaryModel: "stub/headline" }));
+			writeFileSync(join(dir, "focus-mode.json"), JSON.stringify({ summaryModel: "stub/headline" }));
 			const mounted = mount(dir, { find: () => ({}), streamSimple: () => ({ result: async () => {
 				if (response instanceof Error) throw response;
 				return response;

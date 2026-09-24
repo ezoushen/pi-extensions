@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AssistantMessageComponent, ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
 import { KEYBINDINGS } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
-import { registerExchangeStats } from "./exchange-stats.ts";
+import { registerExchangeStats } from "./focus-mode.ts";
 
 initTheme("dark");
 test("fold defaults do not collide with Pi 0.87.1 default keybindings", () => {
@@ -117,17 +117,26 @@ test("picker toggles one older tool block and renders dim rows with an undimmed 
 test("settings override a default key and malformed value warns once", () => {
  const dir = mkdtempSync(join(tmpdir(), "pi-fold-keys-"));
  try {
-  writeFileSync(join(dir, "exchange-stats.json"), JSON.stringify({ processKey: "ctrl+alt+x", exchangeKey: 7 }));
+  writeFileSync(join(dir, "focus-mode.json"), JSON.stringify({ processKey: "ctrl+alt+x", exchangeKey: 7 }));
   const m = mount({ agentDir: dir, environment: {} });
   try {
    assert.equal(m.shortcuts.has("ctrl+alt+x"), true);
    assert.equal(m.shortcuts.has("ctrl+alt+f"), false);
    assert.equal(m.shortcuts.has("ctrl+alt+e"), true);
    assert.equal(m.warnings.length, 1);
+   assert.match(m.warnings[0], /^focus-mode: invalid fold shortcut/);
    m.handlers.get("session_start")({}, m.ctx);
    assert.equal(m.warnings.length, 1);
   } finally { m.close(); }
  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("PI_FOCUS_MODE_PROCESS_KEY selects the process shortcut", () => {
+ const m = mount({ environment: { PI_FOCUS_MODE_PROCESS_KEY: "ctrl+alt+x" } });
+ try {
+  assert.equal(m.shortcuts.has("ctrl+alt+x"), true);
+  assert.equal(m.shortcuts.has("ctrl+alt+f"), false);
+ } finally { m.close(); }
 });
 
 test("fullscreen mouse dispatch toggles a process line and a block title once", () => {

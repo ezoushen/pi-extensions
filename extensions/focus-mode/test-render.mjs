@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import exchangeStats from "./exchange-stats.ts";
+import exchangeStats from "./focus-mode.ts";
 
 function mount() {
 	const handlers = new Map();

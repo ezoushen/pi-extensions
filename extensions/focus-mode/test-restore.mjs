@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { AssistantMessageComponent, ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
-import { registerExchangeStats } from "./exchange-stats.ts";
+import { registerExchangeStats } from "./focus-mode.ts";
 
 initTheme("dark");
 const assistant = (timestamp, content) => ({ role: "assistant", timestamp, content: content.map((item) => ({ ...item })), stopReason: "stop" });
@@ -77,7 +77,7 @@ test("a second extension instance restores a model headline and saved time witho
 	let calls = 0;
 	const registry = { find: () => ({}), streamSimple: () => { calls++; return { result: async () => ({ stopReason: "stop", content: [{ type: "text", text: "Checking saved state" }] }) }; } };
 	try {
-		writeFileSync(join(dir, "exchange-stats.json"), JSON.stringify({ summaryModel: "stub/headline" }));
+		writeFileSync(join(dir, "focus-mode.json"), JSON.stringify({ summaryModel: "stub/headline" }));
 		const first = mount(entries, dir, registry);
 		const trace = "Checking details. " + "x ".repeat(900);
 		const message = assistant(101, [{ type: "thinking", thinking: trace }, tool("one")]);
@@ -119,7 +119,7 @@ test("a model headline that resolves after the exchange settles is shown live an
 	const registry = { find: () => ({}), streamSimple: () => ({ result: () => new Promise((resolve) => pending.push(resolve)) }) };
 	const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve)); };
 	try {
-		writeFileSync(join(dir, "exchange-stats.json"), JSON.stringify({ summaryModel: "stub/headline" }));
+		writeFileSync(join(dir, "focus-mode.json"), JSON.stringify({ summaryModel: "stub/headline" }));
 		const first = mount(entries, dir, registry);
 		const trace = "Inspecting deferred work. " + "x ".repeat(900);
 		const content = [{ type: "thinking", thinking: trace }, { type: "text", text: "Done" }];
@@ -161,7 +161,7 @@ test("a final headline failure after the exchange settles reverts the saved mode
 	const registry = { find: () => ({}), streamSimple: () => ({ result: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) }) };
 	const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve)); };
 	try {
-		writeFileSync(join(dir, "exchange-stats.json"), JSON.stringify({ summaryModel: "stub/headline" }));
+		writeFileSync(join(dir, "focus-mode.json"), JSON.stringify({ summaryModel: "stub/headline" }));
 		const first = mount(entries, dir, registry);
 		const trace = "Inspecting reverted work. " + "x ".repeat(900);
 		const content = [{ type: "thinking", thinking: trace }, { type: "text", text: "Done" }];

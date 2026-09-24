@@ -1,5 +1,5 @@
 /**
- * exchange-stats.ts — exchange timing and cost, with process lines and block titles.
+ * focus-mode.ts — exchange timing and cost, with process lines and block titles.
  *
  * An *exchange* is one uninterrupted work span: from a prompt you submitted until
  * pi has nothing left to do automatically. A *turn* is a single model response
@@ -66,13 +66,13 @@ const TICK_MS = 1_000;
 /** Above this share of wall time, tool execution is called out in the summary. */
 const TOOL_SHARE_NOTE = 0.25;
 const FOLD_KEYS = {
-	processKey: { default: "ctrl+alt+f", env: "PI_EXCHANGE_STATS_PROCESS_KEY" },
-	exchangeKey: { default: "ctrl+alt+e", env: "PI_EXCHANGE_STATS_EXCHANGE_KEY" },
-	pickerKey: { default: "ctrl+alt+s", env: "PI_EXCHANGE_STATS_PICKER_KEY" },
-	cursorKey: { default: "ctrl+alt+g", env: "PI_EXCHANGE_STATS_CURSOR_KEY" },
+	processKey: { default: "ctrl+alt+f", env: "PI_FOCUS_MODE_PROCESS_KEY" },
+	exchangeKey: { default: "ctrl+alt+e", env: "PI_FOCUS_MODE_EXCHANGE_KEY" },
+	pickerKey: { default: "ctrl+alt+s", env: "PI_FOCUS_MODE_PICKER_KEY" },
+	cursorKey: { default: "ctrl+alt+g", env: "PI_FOCUS_MODE_CURSOR_KEY" },
 } as const;
-const CURSOR_SETTING = { cursorMode: { default: false, env: "PI_EXCHANGE_STATS_CURSOR_MODE", parseEnv: (value: string) => value === "true" } } as const;
-const SUMMARY_SETTING = { summaryModel: { default: "", env: "PI_EXCHANGE_STATS_SUMMARY_MODEL" } } as const;
+const CURSOR_SETTING = { cursorMode: { default: false, env: "PI_FOCUS_MODE_CURSOR_MODE", parseEnv: (value: string) => value === "true" } } as const;
+const SUMMARY_SETTING = { summaryModel: { default: "", env: "PI_FOCUS_MODE_SUMMARY_MODEL" } } as const;
 
 interface TokenTotals {
 	input: number;
@@ -249,10 +249,10 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	let toolPatch: ReturnType<typeof installToolFold> | undefined;
 	let thinkingPatch: ReturnType<typeof installThinkingFold> | undefined;
 	let sessionActive = false;
-	const resolvedKeys = resolveSettings("exchange-stats", FOLD_KEYS, {
+	const resolvedKeys = resolveSettings("focus-mode", FOLD_KEYS, {
 		cwd: process.cwd(), hasUI: true, isProjectTrusted: () => false,
 	}, settingsRuntime);
-	const cursorMode = resolveSettings("exchange-stats", CURSOR_SETTING, {
+	const cursorMode = resolveSettings("focus-mode", CURSOR_SETTING, {
 		cwd: process.cwd(), hasUI: true, isProjectTrusted: () => false,
 	}, settingsRuntime).cursorMode.value === true;
 	const validKey = (value: unknown): value is KeyId => {
@@ -452,7 +452,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		const session = ++summarySession;
 		summaryScheduler?.dispose();
 		summaryScheduler = undefined;
-		const summaryValue = resolveSettings("exchange-stats", SUMMARY_SETTING, {
+		const summaryValue = resolveSettings("focus-mode", SUMMARY_SETTING, {
 			cwd: ctx.cwd ?? process.cwd(), hasUI: ctx.hasUI, isProjectTrusted: () => ctx.isProjectTrusted?.() ?? false,
 		}, settingsRuntime).summaryModel.value;
 		const configuredModel = typeof summaryValue === "string" ? summaryValue.trim() : "";
@@ -460,7 +460,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			const slash = configuredModel.indexOf("/");
 			const chosen = slash > 0 ? ctx.modelRegistry?.find(configuredModel.slice(0, slash), configuredModel.slice(slash + 1)) : undefined;
 			if (!chosen) {
-				announce(ctx, `exchange-stats: unknown summaryModel ${configuredModel}; using trace sentence`, "warning", `exchange-stats:unknown-summary:${session}`);
+				announce(ctx, `focus-mode: unknown summaryModel ${configuredModel}; using trace sentence`, "warning", `focus-mode:unknown-summary:${session}`);
 			} else {
 				summaryScheduler = new HeadlineScheduler({
 					summarize: async (trace, signal) => {
@@ -491,21 +491,21 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 						const detail = reason === "length"
 							? "model did not answer within its output cap; set thinkingLevelMap.off to \"none\" for this model"
 							: reason === "timeout" ? "request timed out" : (message ?? "headline request failed").replace(/\s+/g, " ").trim().slice(0, 120);
-						announce(ctx, `exchange-stats: headline summary ${configuredModel}: ${detail}; using trace sentence`, "warning", `exchange-stats:headline-failure:${session}`);
+						announce(ctx, `focus-mode: headline summary ${configuredModel}: ${detail}; using trace sentence`, "warning", `focus-mode:headline-failure:${session}`);
 					},
 				});
 			}
 		}
 		if (invalidKey && !warnedAboutKey) {
-			announce(ctx, "exchange-stats: invalid fold shortcut; using default key", "warning", "exchange-stats:invalid-fold-key");
+			announce(ctx, "focus-mode: invalid fold shortcut; using default key", "warning", "focus-mode:invalid-fold-key");
 			warnedAboutKey = true;
 		}
 		if (!toolPatch.installed && !warnedAboutToolFold) {
-			announce(ctx, "exchange-stats: tool folding unavailable; Pi tool rows remain native", "warning");
+			announce(ctx, "focus-mode: tool folding unavailable; Pi tool rows remain native", "warning");
 			warnedAboutToolFold = true;
 		}
 		if (!thinkingPatch.installed && !warnedAboutThinkingFold) {
-			announce(ctx, "exchange-stats: thinking folding unavailable; Pi thinking remains native", "warning");
+			announce(ctx, "focus-mode: thinking folding unavailable; Pi thinking remains native", "warning");
 			warnedAboutThinkingFold = true;
 		}
 		restoreSession(ctx);

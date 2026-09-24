@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 // Every module the bundle can include: the entry and each source module beside it.
-const files = ["exchange-stats.ts", ...readdirSync(join(packageRoot, "src")).filter((name) => name.endsWith(".ts")).map((name) => `src/${name}`)];
+const files = ["focus-mode.ts", ...readdirSync(join(packageRoot, "src")).filter((name) => name.endsWith(".ts")).map((name) => `src/${name}`)];
 
 const checks = [
 	["absolute path", /(["'`])\/(?!\/)[^"'`\n]+\1/g],
@@ -18,7 +18,7 @@ const checks = [
 
 // Each allowance is a hit that names no machine, with the reason it is legitimate.
 const allowances = [
-	{ file: "exchange-stats.ts", category: "model or provider", value: "unknown", reason: "placeholder when Pi reports no model" },
+	{ file: "focus-mode.ts", category: "model or provider", value: "unknown", reason: "placeholder when Pi reports no model" },
 	{ file: "src/tool-render.ts", category: "home directory", value: "~/", reason: "display prefix for paths under the runtime home directory, which is read at run time" },
 	{ file: "src/tool-fold.ts", category: "model or provider", value: "trace", reason: "headline source enum beside `\"model\"`" },
 	{ file: "src/fold-picker.ts", category: "model or provider", value: "▸", reason: "fold glyph after a ToolFoldModel call" },

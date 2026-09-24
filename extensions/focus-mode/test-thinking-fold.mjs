@@ -58,12 +58,12 @@ test("thinking headline strips markdown markers", () => {
 test("headline sentence boundaries keep filenames and versions intact", () => {
 	const model = new ToolFoldModel(() => 0);
 	const title = (trace, streaming) => model.thinkingTitle({ timestamp: 59 }, 0, trace, streaming);
-	assert.match(title("I should check exchange-stats.ts first.", false), /^◈ I should check exchange-stats\.ts first\. · /);
+	assert.match(title("I should check focus-mode.ts first.", false), /^◈ I should check focus-mode\.ts first\. · /);
 	assert.match(title("Version 0.87.1 is installed.", false), /^◈ Version 0\.87\.1 is installed\. · /);
 	assert.match(title("Read data.txt then run run.sh with bash", true), /^◈ Thinking · /);
 	assert.match(title("See e.g. the README.", false), /^◈ (?:See e\.g\. the README\.|the README\.) · /);
-	assert.match(title("Checking exchange-stats.ts.", true), /^◈ Thinking · /);
-	assert.match(title("Checking exchange-stats.ts. ", true), /^◈ Checking exchange-stats\.ts\. · /);
+	assert.match(title("Checking focus-mode.ts.", true), /^◈ Thinking · /);
+	assert.match(title("Checking focus-mode.ts. ", true), /^◈ Checking focus-mode\.ts\. · /);
 	assert.match(title("继续检查？下一步", true), /^◈ 继续检查？ · /);
 	assert.match(title("继续检查！下一步", true), /^◈ 继续检查！ · /);
 });
