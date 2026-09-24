@@ -61,6 +61,17 @@ function expectedFinishLabel(at, now, timeZone) {
 	return dateKey(date) === dateKey(new Date(now)) ? localTime : localDate + " " + localTime;
 }
 
+function exchangeCardRows(value) {
+	const rows = value.split("\n").map((line) => line.trim());
+	const headlines = rows.filter((line) => /^⏱ (?:\d+(?:\.\d+)?ms|\d+(?:\.\d+)?s|\d+m(?:\d+s)?) · .+ · free-model$/.test(line));
+	const metrics = rows.filter((line) => /^in \S+ · out \S+(?: · cache .+)?(?: · waiting \S+)? · \$0$/.test(line));
+	return {
+		headline: headlines.at(-1),
+		metrics: metrics.at(-1),
+		count: headlines.length,
+	};
+}
+
 test("packed exchange-stats folds streamed reasoning and native tool output in a real Pi terminal", async (t) => {
 	const piBin = process.env.PI_BIN ?? executable("pi");
 	const python = executable("python3");
@@ -131,7 +142,8 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		await waitForScreen(terminal, (value) => value.includes("⏱ ready") && value.includes("free-model"), child);
 		send(child, "Give one short result.\r");
 		const singleSettled = await waitForScreen(terminal, (value) =>
-			value.includes("The single-step result is ready.") && value.includes("Exchange 1") && /▸ Worked for .*◈ 1 ⚙ 0/.test(value), child, 20000);
+			value.includes("The single-step result is ready.") && exchangeCardRows(value).headline && exchangeCardRows(value).metrics &&
+			/▸ Worked for .*◈ 1 ⚙ 0/.test(value), child, 20000);
 		const singleProgress = singleSettled.split("\n").find((line) => line.includes("▸ Worked for"));
 		assert.ok(singleProgress, "single-step screen is missing its folded progress line");
 		assert.match(singleProgress, /◈ 1 ⚙ 0/);
@@ -146,8 +158,18 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		}, child, 15000);
 		assert.match(secondLive, /▸.*◈/);
 		const settled = await waitForScreen(terminal, (value) =>
-			value.includes("Both file contents are available.") && value.includes("Exchange 2") &&
+			value.includes("Both file contents are available.") && exchangeCardRows(value).count >= 2 && exchangeCardRows(value).metrics &&
 			/▸ Worked for .*◈/.test(value), child, 20000);
+		const { headline: exchangeHeadline, metrics: exchangeMetrics } = exchangeCardRows(settled);
+		assert.ok(exchangeHeadline, "settled screen is missing the exchange card headline");
+		assert.ok(exchangeMetrics, "settled screen is missing the exchange card metrics");
+		assert.doesNotMatch(exchangeHeadline, /Exchange \d/);
+		assert.doesNotMatch(exchangeMetrics, /\b(?:turns?|prompts?|tools|thinking|total)\b/);
+		const capturedAt = Date.now();
+		// PTY redraw can cross a second boundary after the exchange has settled.
+		const expectedTimes = [0, 1_000].map((delta) => expectedFinishLabel(capturedAt - delta, capturedAt, timeZone));
+		assert.ok(expectedTimes.some((value) => exchangeHeadline.includes(value)), "exchange finish time did not match the local clock: " + exchangeHeadline);
+
 		optionClickProgress(child, settled);
 		const optionOpened = await waitForScreen(terminal, (value) =>
 			value.includes("▾ Worked for") && value.includes("▾ ◈ 1 ⚙ 0") && value.includes("▾ ◈ 1 ⚙ 2") &&
@@ -156,12 +178,6 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		optionClickProgress(child, optionOpened);
 		const optionFolded = await waitForScreen(terminal, (value) =>
 			value.includes("▸ Worked for") && !value.includes("▾ ◈ 1 ⚙ 0") && !value.includes("▾ ◈ 1 ⚙ 2"), child);
-		const exchangeHeadline = settled.split("\n").find((line) => line.includes("⏱ Exchange 2"));
-		assert.ok(exchangeHeadline, "settled screen is missing the exchange card headline");
-		const capturedAt = Date.now();
-		// PTY redraw can cross a second boundary after the exchange has settled.
-		const expectedTimes = [0, 1_000].map((delta) => expectedFinishLabel(capturedAt - delta, capturedAt, timeZone));
-		assert.ok(expectedTimes.some((value) => exchangeHeadline.includes(value)), "exchange finish time did not match the local clock: " + exchangeHeadline);
 		assert.doesNotMatch(settled, /FIRST_NATIVE_OUTPUT|SECOND_NATIVE_OUTPUT/);
 		assert.doesNotMatch(settled, /Turn 1|Turn 2/);
 
@@ -186,7 +202,7 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		assert.match(opened, /second\.txt/);
 		assert.match(opened, /I will read both files/);
 		assert.match(opened, /Both file contents are available/);
-		assert.match(opened, /Exchange 2/);
+		assert.ok(exchangeCardRows(opened).headline, "opened screen is missing the exchange card headline");
 		assert.match(opened, /├/);
 		assert.match(opened, /└/);
 		assert.match(opened, /│/);

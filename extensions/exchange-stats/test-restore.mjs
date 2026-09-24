@@ -209,7 +209,9 @@ test("a 0.1.0 entry keeps its card and derives an untimed thinking title from it
 		component.updateContent(assistant(201, entries[0].message.content), false);
 		assert.match(component.render(90).join("\n"), /Inspecting the old run\. · — · 4 words/);
 		const theme = { bg: (_name, value) => value, fg: (_name, value) => value };
-		assert.match(mounted.renderer()(entries[1], { expanded: true }, theme).render(90).join("\n"), /Exchange 1.*out 4/s);
+		const card = mounted.renderer()(entries[1], { expanded: true }, theme).render(90)
+			.map((line) => line.trim()).filter(Boolean);
+		assert.deepEqual(card, ["⏱ 4.0s · old-model", "in 2 · out 4 · $0"]);
 	} finally { mounted.close(); }
 });
 
