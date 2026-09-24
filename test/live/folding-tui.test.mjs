@@ -38,6 +38,15 @@ function send(child, value) {
 	child.stdin.write(JSON.stringify({ type: "send", data: Buffer.from(value).toString("base64") }) + "\n");
 }
 
+function optionClickProgress(child, value) {
+	const rows = value.split("\n");
+	const y = rows.findLastIndex((row) => /[▸▾] Worked for/.test(row));
+	assert.ok(y >= 0, "screen is missing the progress line");
+	const x = rows[y].indexOf("Worked for") + 1;
+	send(child, `\x1b[<8;${x};${y + 1}M`);
+	send(child, `\x1b[<8;${x};${y + 1}m`);
+}
+
 function chunk(toolCallIndex, toolId, path) {
 	return { index: toolCallIndex, id: toolId, type: "function", function: { name: "read", arguments: JSON.stringify({ path }) } };
 }
@@ -109,7 +118,7 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 4096 }],
 		} } }));
 
-		child = spawn(python, [runner, piBin, "--provider", "stub", "--model", "free-model", "--no-session",
+		child = spawn(python, [runner, piBin, "--provider", "stub", "--model", "free-model", "--tui-mode", "fullscreen", "--no-session",
 			"--no-context-files", "--no-skills", "--no-prompt-templates", "--no-themes", "--offline"], {
 			cwd: agentDir, env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, TERM: "xterm-256color", TZ: timeZone }, stdio: ["pipe", "pipe", "pipe"],
 		});
@@ -139,6 +148,14 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		const settled = await waitForScreen(terminal, (value) =>
 			value.includes("Both file contents are available.") && value.includes("Exchange 2") &&
 			(value.match(/▸.*◈/g)?.length ?? 0) >= 1, child, 20000);
+		optionClickProgress(child, settled);
+		const optionOpened = await waitForScreen(terminal, (value) =>
+			value.includes("▾ Worked for") && value.includes("▾ ◈ 1 ⚙ 0") && value.includes("▾ ◈ 1 ⚙ 2") &&
+			value.includes("first.txt") && value.includes("second.txt"), child);
+		assert.doesNotMatch(optionOpened, /FIRST_NATIVE_OUTPUT|SECOND_NATIVE_OUTPUT/);
+		optionClickProgress(child, optionOpened);
+		const optionFolded = await waitForScreen(terminal, (value) =>
+			value.includes("▸ Worked for") && !value.includes("▾ ◈ 1 ⚙ 0") && !value.includes("▾ ◈ 1 ⚙ 2"), child);
 		const exchangeHeadline = settled.split("\n").find((line) => line.includes("⏱ Exchange 2"));
 		assert.ok(exchangeHeadline, "settled screen is missing the exchange card headline");
 		const capturedAt = Date.now();
@@ -175,7 +192,7 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		assert.match(opened, /│/);
 		if (evidencePath) {
 			mkdirSync(dirname(evidencePath), { recursive: true });
-			writeFileSync(evidencePath, `single-step settled with zero notes:\n${singleSettled}\n\nunwound multi-step exchange:\n${opened}\n`);
+			writeFileSync(evidencePath, `option-click unwound the multi-step exchange:\n${optionOpened}\n\noption-click folded progress again:\n${optionFolded}\n\npicker-opened native output:\n${opened}\n`);
 			assert.match(ansiCapture, /\x1b\[3m/, "live ANSI capture does not include italic styling");
 		}
 		assert.ok(!errors, errors);

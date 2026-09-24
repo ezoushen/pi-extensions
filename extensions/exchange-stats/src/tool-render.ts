@@ -9,7 +9,7 @@ interface ToolComponent {
 	args: Record<string, unknown>;
 	result?: { content?: Array<{ type: string; text?: string }> };
 	render(width: number): string[];
-	handleMouse?(event: { type: string; button: string; y: number; width: number; height: number }): unknown;
+	handleMouse?(event: { type: string; button: string; y: number; width: number; height: number; alt?: boolean }): unknown;
 	ui?: { requestRender(): void };
 }
 
@@ -210,7 +210,7 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 	}
 
 	prototype.render = folded;
-	function foldedMouse(this: ToolComponent, event: { type: string; button: string; x?: number; y: number; width: number; height: number }) {
+	function foldedMouse(this: ToolComponent, event: { type: string; button: string; x?: number; y: number; width: number; height: number; alt?: boolean }) {
 		if (owners.size === 0) return originalMouse?.call(this, event);
 		const { model } = ownerFor(this);
 		const key = `tool:${this.toolCallId}`;
@@ -221,7 +221,13 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 		const gapRows = gapBefore && progress?.open !== true ? 1 : 0;
 		if (progress?.lead && event.y === gapRows) {
 			if (event.type === "move") return setHover(`exchange:${progress.exchange}`) ? repaint : undefined;
-			if (event.type === "click" && event.button === "left") { model.toggleProgress(progress.exchange); this.ui?.requestRender(); return { handled: true, render: false }; }
+			if (event.type === "click" && event.button === "left") {
+				const control = { kind: "progress" as const, exchange: progress.exchange };
+				if (event.alt) model.toggleOneLevel(control);
+				else model.toggleProgress(progress.exchange);
+				this.ui?.requestRender();
+				return { handled: true, render: false };
+			}
 		}
 		if (progress && !progress.open) return event.type === "move" && setHover(undefined) ? repaint : undefined;
 		const rowOffset = gapRows + (progress?.lead ? 1 : 0);
@@ -241,13 +247,17 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 			return native ?? (changed ? repaint : undefined);
 		}
 		if (event.type === "click" && event.button === "left" && event.y === 0 && process && model.isProcessLead(process.id, `tool:${this.toolCallId}`)) {
-			model.toggleProcess(process.id);
+			const control = { kind: "process" as const, id: process.id };
+			if (event.alt) model.toggleOneLevel(control);
+			else model.toggleProcess(process.id);
 			this.ui?.requestRender();
 			return { handled: true, render: false };
 		}
 		const titleY = process && model.isProcessLead(process.id, `tool:${this.toolCallId}`) ? 1 : 0;
 		if (event.type === "click" && event.button === "left" && event.y === titleY && (!process || model.isProcessOpen(process.id))) {
-			if (model.toggle(this.toolCallId) !== undefined) {
+			const control = { kind: "tool" as const, id: this.toolCallId };
+			const toggled = event.alt ? model.toggleOneLevel(control) : model.toggle(this.toolCallId);
+			if (toggled !== undefined) {
 				this.ui?.requestRender();
 				return { handled: true, render: false };
 			}
@@ -300,7 +310,7 @@ interface AssistantComponent {
 	outputPad: number;
 	isStreaming: boolean;
 	updateContent(message: Message, isStreaming?: boolean): void;
-	handleMouse?(event: { type: string }): unknown;
+	handleMouse?(event: { type: string; button?: string; y?: number; width?: number; alt?: boolean }): unknown;
 }
 
 interface AssistantClass {
@@ -466,12 +476,19 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 					},
 				};
 			}
-			const onMouse = (event: { type: string; button: string; y: number }) => {
+			const onMouse = (event: { type: string; button: string; y: number; alt?: boolean }) => {
 				const progress = model.progressForItem(key);
 				const gapRows = gapBefore && progress?.open !== true ? 1 : 0;
 				if (progress?.lead && event.y === gapRows) {
 					if (event.type === "move") { claimedMove = true; return setHover(`exchange:${progress.exchange}`) ? repaint : undefined; }
-					if (event.type === "click" && event.button === "left") { model.toggleProgress(progress.exchange); folded.call(this, message, isStreaming); requestRender(); return { handled: true, render: false }; }
+					if (event.type === "click" && event.button === "left") {
+						const control = { kind: "progress" as const, exchange: progress.exchange };
+						if (event.alt) model.toggleOneLevel(control);
+						else model.toggleProgress(progress.exchange);
+						folded.call(this, message, isStreaming);
+						requestRender();
+						return { handled: true, render: false };
+					}
 				}
 				if (progress && !progress.open) return undefined;
 				const y = event.y - gapRows - (progress?.lead ? 1 : 0);
@@ -483,9 +500,18 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 					return setHover(key) ? repaint : undefined;
 				}
 				if (event.type !== "click" || event.button !== "left") return undefined;
-				if (process && lead && y === 0) model.toggleProcess(process.id);
-				else if (process && !model.isProcessOpen(process.id)) model.toggleProcess(process.id);
-				else model.toggleThinking(message, run.index);
+				if (process && lead && y === 0) {
+					const control = { kind: "process" as const, id: process.id };
+					if (event.alt) model.toggleOneLevel(control);
+					else model.toggleProcess(process.id);
+				} else if (process && !model.isProcessOpen(process.id)) {
+					const control = { kind: "process" as const, id: process.id };
+					if (event.alt) model.toggleOneLevel(control);
+					else model.toggleProcess(process.id);
+				} else if (event.alt) {
+					const control = { kind: "thinking" as const, message, index: run.index };
+					model.toggleOneLevel(control);
+				} else model.toggleThinking(message, run.index);
 				folded.call(this, message, isStreaming);
 				requestRender();
 				return { handled: true, render: false };
@@ -576,9 +602,9 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 
 	prototype.updateContent = folded;
 	// A move over ordinary text or an opened trace ends the fold-control hover.
-	function hoverMouse(this: AssistantComponent, event: { type: string }) {
+	function hoverMouse(this: AssistantComponent, event: { type: string; alt?: boolean }) {
 		claimedMove = false;
-		const pointer = event as { type: string; button?: string; y?: number; width?: number };
+		const pointer = event as { type: string; button?: string; y?: number; width?: number; alt?: boolean };
 		if (owners.size > 0 && pointer.y !== undefined && pointer.width !== undefined) {
 			let row = 0;
 			for (const child of this.contentContainer.children) {
@@ -588,7 +614,9 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 				if (progress?.lead && pointer.y === row) {
 					if (event.type === "move") return setHover(`exchange:${progress.exchange}`) ? repaint : undefined;
 					if (event.type === "click" && pointer.button === "left") {
-						owner?.model.toggleProgress(progress.exchange);
+						const control = { kind: "progress" as const, exchange: progress.exchange };
+						if (pointer.alt) owner?.model.toggleOneLevel(control);
+						else owner?.model.toggleProgress(progress.exchange);
 						if (this.lastMessage) this.updateContent(this.lastMessage);
 						owner?.requestRender();
 						return { handled: true, render: false };

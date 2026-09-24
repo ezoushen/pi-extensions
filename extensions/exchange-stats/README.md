@@ -41,7 +41,10 @@ process, or block, and Escape to close it. The exchange row toggles settled prog
 or the streaming processes. The picker marks open items; opening a block also opens
 its process, while folding that block leaves the process open. These controls change
 only the display. In fullscreen mode, left click a process line, progress line, or
-block title to toggle it. Hovering one of these rows brightens its text and puts it
+block title to toggle it. Option+left-click a progress or process line toggles that
+row and its direct children; on a block title it behaves like a plain click. A terminal
+that swallows Option+click, for example to move the cursor, sends a plain click.
+Hovering one of these rows brightens its text and puts it
 on the theme's selection background, from the title after its tree guide to the right edge;
 opened native output is not highlighted. The highlight follows the pointer across fold rows,
 assistant text and the exchange card; it can stay on a row after the pointer
