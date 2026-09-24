@@ -23,25 +23,29 @@ interface TitleTheme {
 	italic?(text: string): string;
 }
 
-// One pointer drives every session's transcript, so the hovered fold control is shared.
-let hoveredControl: string | undefined;
-/** Moves the hover to a progress, process, tool or thinking control, or clears it; true when it changed. */
-function setHover(key: string | undefined): boolean {
-	if (hoveredControl === key) return false;
-	hoveredControl = key;
+// Pi's transcript pointer is shared, but each fold control belongs to one model.
+let hoveredControl: { model: ToolFoldModel; key: string } | undefined;
+/** Moves the hover to a model's progress, process, tool or thinking control, or clears it; true when it changed. */
+function setHover(model: ToolFoldModel | undefined, key: string | undefined): boolean {
+	const next = model && key !== undefined ? { model, key } : undefined;
+	if (hoveredControl?.model === next?.model && hoveredControl?.key === next?.key) return false;
+	hoveredControl = next;
 	return true;
+}
+function isHovered(model: ToolFoldModel, key: string): boolean {
+	return hoveredControl?.model === model && hoveredControl.key === key;
 }
 const repaint = { handled: true, render: true } as const;
 
 /** Mouse handler for extension-drawn rows that are not fold controls: a move there ends the hover. */
 export function endHoverOnMove(event: { type: string }): typeof repaint | undefined {
-	return event.type === "move" && setHover(undefined) ? repaint : undefined;
+	return event.type === "move" && setHover(undefined, undefined) ? repaint : undefined;
 }
 
 /** Styles fold-control text with its D9 color and the active theme's italic style when available. */
 function styleControl(theme: TitleTheme | undefined, model: ToolFoldModel, key: string, text: string): string {
 	if (!theme) return text;
-	const color = model.isCursorHighlighted(key) ? "accent" : hoveredControl === key ? "muted" : "dim";
+	const color = model.isCursorHighlighted(key) ? "accent" : isHovered(model, key) ? "muted" : "dim";
 	const colored = theme.fg(color, text);
 	return theme.italic?.(colored) ?? colored;
 }
@@ -53,11 +57,12 @@ function styleControl(theme: TitleTheme | undefined, model: ToolFoldModel, key: 
 function hoverRows(theme: TitleTheme | undefined, model: ToolFoldModel, key: string, lines: string[], leading: number): string[] {
 	if (!theme) return lines;
 	const cursor = model.isCursorHighlighted(key);
-	const color = cursor ? "accent" : hoveredControl === key ? "muted" : "dim";
+	const hovered = isHovered(model, key);
+	const color = cursor ? "accent" : hovered ? "muted" : "dim";
 	const colorOpen = theme.fg(color, "\u0000").split("\u0000")[0];
 	const italicOpen = theme.italic?.("\u0000").split("\u0000")[0] ?? "";
 	const restoredStyle = colorOpen + italicOpen;
-	const selected = hoveredControl === key && !cursor && theme.bg;
+	const selected = hovered && !cursor && theme.bg;
 	if (!selected) return restoredStyle ? lines.map((line) => line.replaceAll("\x1b[0m", `\x1b[0m${restoredStyle}`)) : lines;
 	const [open, close] = theme.bg("selectedBg", "\u0000").split("\u0000");
 	const bare = " ".repeat(leading);
@@ -220,7 +225,7 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 		const gapBefore = model.hasTextImmediatelyBefore(key) && (processLead || progress?.lead);
 		const gapRows = gapBefore && progress?.open !== true ? 1 : 0;
 		if (progress?.lead && event.y === gapRows) {
-			if (event.type === "move") return setHover(`exchange:${progress.exchange}`) ? repaint : undefined;
+			if (event.type === "move") return setHover(model, `exchange:${progress.exchange}`) ? repaint : undefined;
 			if (event.type === "click" && event.button === "left") {
 				const control = { kind: "progress" as const, exchange: progress.exchange };
 				if (event.alt) model.toggleOneLevel(control);
@@ -229,7 +234,7 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 				return { handled: true, render: false };
 			}
 		}
-		if (progress && !progress.open) return event.type === "move" && setHover(undefined) ? repaint : undefined;
+		if (progress && !progress.open) return event.type === "move" && setHover(undefined, undefined) ? repaint : undefined;
 		const rowOffset = gapRows + (progress?.lead ? 1 : 0);
 		if (progress || rowOffset) event = { ...event, y: event.y - rowOffset, x: event.x === undefined ? undefined : event.x - (progress ? BLOCK_INDENT : 0),
 			width: event.width - (progress ? BLOCK_INDENT : 0), height: event.height - rowOffset };
@@ -239,7 +244,7 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 			const titleRow = lead ? 1 : 0;
 			const key = lead && event.y === 0 ? `process:${process!.id}`
 				: event.y === titleRow && (!process || model.isProcessOpen(process.id)) && model.titleParts(this.toolCallId) ? `tool:${this.toolCallId}` : undefined;
-			const changed = setHover(key);
+			const changed = setHover(model, key);
 			const offset = key ? undefined : nativeOffset.get(this);
 			const native = offset && event.y >= offset.rows
 				? originalMouse?.call(this, { ...event, y: event.y - offset.rows, x: event.x === undefined ? undefined : event.x - offset.columns, width: event.width - offset.columns, height: event.height - offset.rows })
@@ -480,7 +485,7 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 				const progress = model.progressForItem(key);
 				const gapRows = gapBefore && progress?.open !== true ? 1 : 0;
 				if (progress?.lead && event.y === gapRows) {
-					if (event.type === "move") { claimedMove = true; return setHover(`exchange:${progress.exchange}`) ? repaint : undefined; }
+					if (event.type === "move") { claimedMove = true; return setHover(model, `exchange:${progress.exchange}`) ? repaint : undefined; }
 					if (event.type === "click" && event.button === "left") {
 						const control = { kind: "progress" as const, exchange: progress.exchange };
 						if (event.alt) model.toggleOneLevel(control);
@@ -497,7 +502,7 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 					const key = lead && y === 0 ? `process:${process!.id}`
 						: y === titleRow && (!process || model.isProcessOpen(process.id)) ? `thinking:${message.timestamp}:${run.index}` : undefined;
 					claimedMove = key !== undefined;
-					return setHover(key) ? repaint : undefined;
+					return setHover(model, key) ? repaint : undefined;
 				}
 				if (event.type !== "click" || event.button !== "left") return undefined;
 				if (process && lead && y === 0) {
@@ -612,7 +617,7 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 				const owner = this.lastMessage ? ownerFor(this.lastMessage) : undefined;
 				const progress = control && owner?.model.progressForItem(control.key);
 				if (progress?.lead && pointer.y === row) {
-					if (event.type === "move") return setHover(`exchange:${progress.exchange}`) ? repaint : undefined;
+					if (event.type === "move") return setHover(owner!.model, `exchange:${progress.exchange}`) ? repaint : undefined;
 					if (event.type === "click" && pointer.button === "left") {
 						const control = { kind: "progress" as const, exchange: progress.exchange };
 						if (pointer.alt) owner?.model.toggleOneLevel(control);
@@ -626,7 +631,7 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 			}
 		}
 		const result = originalMouse?.call(this, event);
-		if (event.type === "move" && owners.size > 0 && !claimedMove && setHover(undefined)) return result ?? repaint;
+		if (event.type === "move" && owners.size > 0 && !claimedMove && setHover(undefined, undefined)) return result ?? repaint;
 		return result;
 	}
 	prototype.handleMouse = hoverMouse;

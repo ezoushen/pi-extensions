@@ -22,14 +22,16 @@ const theme = (innerReset = false) => ({
 const HOVER = /\x1b\[48;5;236m/;
 const move = (y, height = 40) => ({ type: "move", button: "none", x: 5, y, width: 80, height });
 
-function setup(timestamp, getTheme = theme) {
+function setup(timestamp, getTheme = theme, settled = false) {
 	const model = new ToolFoldModel(() => 100);
 	const message = snapshot(timestamp, [
 		{ type: "thinking", thinking: "Checking the setup file." },
 		{ type: "toolCall", id: `hover-${timestamp}`, name: "bash", arguments: { command: "echo hover" } },
 		{ type: "text", text: "Plain answer text." },
 	]);
+	if (settled) model.beginExchange(1);
 	model.ingest(message);
+	if (settled) model.endExchange();
 	const thinkingPatch = installThinkingFold(AssistantMessageComponent, model, getTheme);
 	const toolPatch = installToolFold(ToolExecutionComponent, model, getTheme);
 	const assistant = new AssistantMessageComponent();
@@ -59,6 +61,25 @@ test("hovering a process line highlights it and asks Pi to repaint", () => {
 		assert.match(hovered[processRow], /\x1b\[38;5;2m/);
 		assert.equal(hovered.filter((line) => HOVER.test(line)).length, 1, "only the hovered row is highlighted");
 	} finally { restore(); }
+});
+
+test("hovering one owner's settled progress does not highlight another owner's matching row", () => {
+	const first = setup(909, theme, true);
+	const second = setup(910, theme, true);
+	try {
+		const firstLines = first.assistant.render(80);
+		const secondLines = second.assistant.render(80);
+		const firstRow = first.rowOf(firstLines, "▸ Worked for");
+		const secondRow = second.rowOf(secondLines, "▸ Worked for");
+		assert.ok(firstRow >= 0, "first owner renders its settled progress row");
+		assert.ok(secondRow >= 0, "second owner renders its settled progress row");
+		first.assistant.handleMouse(move(firstRow, firstLines.length));
+		assert.match(first.assistant.render(80)[firstRow], HOVER);
+		assert.doesNotMatch(second.assistant.render(80)[secondRow], HOVER, "the same exchange key belongs to a different model");
+	} finally {
+		second.restore();
+		first.restore();
+	}
 });
 
 test("hovering a block title highlights only that title; moving onto text clears it", () => {
