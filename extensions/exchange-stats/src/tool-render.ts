@@ -18,7 +18,46 @@ interface ToolClass {
 }
 
 interface TitleTheme {
-	fg(color: "dim" | "accent", text: string): string;
+	fg(color: "dim" | "accent" | "muted", text: string): string;
+	bg?(color: "selectedBg", text: string): string;
+}
+
+// One pointer drives every session's transcript, so the hovered fold control is shared.
+let hoveredControl: string | undefined;
+/** Moves the hover to `key` (a process, tool or thinking control), or clears it; true when it changed. */
+function setHover(key: string | undefined): boolean {
+	if (hoveredControl === key) return false;
+	hoveredControl = key;
+	return true;
+}
+const repaint = { handled: true, render: true } as const;
+
+/** Mouse handler for extension-drawn rows that are not fold controls: a move there ends the hover. */
+export function endHoverOnMove(event: { type: string }): typeof repaint | undefined {
+	return event.type === "move" && setHover(undefined) ? repaint : undefined;
+}
+
+/** Styles a fold control's text: the transcript cursor's accent, else brighter while hovered, else dim (D9). */
+function styleControl(theme: TitleTheme | undefined, model: ToolFoldModel, key: string, text: string): string {
+	if (!theme) return text;
+	if (model.isCursorHighlighted(key)) return theme.fg("accent", text);
+	return theme.fg(hoveredControl === key ? "muted" : "dim", text);
+}
+
+/**
+ * Puts a hovered control's rendered rows on the theme's selection background, from its
+ * indented start (`leading` columns of plain spaces stay bare) to the right edge.
+ */
+function hoverRows(theme: TitleTheme | undefined, model: ToolFoldModel, key: string, lines: string[], leading: number): string[] {
+	if (hoveredControl !== key || model.isCursorHighlighted(key) || !theme?.bg) return lines;
+	const [open, close] = theme.bg("selectedBg", "\u0000").split("\u0000");
+	const bare = " ".repeat(leading);
+	return lines.map((line) => {
+		const cut = line.startsWith(bare) ? leading : 0;
+		// Inner full resets would end the background early; reopen it after each one.
+		const body = line.slice(cut).replaceAll("\x1b[0m", `\x1b[0m${open}`).replaceAll("\x1b[49m", `\x1b[49m${open}`);
+		return line.slice(0, cut) + open + body + close;
+	});
 }
 
 type Patch = { installed: boolean; restore: () => void };
@@ -94,7 +133,9 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 			const contentWidth = width - padding * 2;
 			const processText = process && model.isProcessLead(process.id, `tool:${this.toolCallId}`)
 				? truncateProcessLine(model.processLine(process.id), contentWidth) : undefined;
-			const processLine = processText === undefined ? [] : new Text(getTheme()?.fg(model.isCursorHighlighted(`process:${process!.id}`) ? "accent" : "dim", processText) ?? processText, padding, 0).render(width);
+			const processKey = `process:${process?.id}`;
+			const processLine = processText === undefined ? []
+				: hoverRows(getTheme(), model, processKey, new Text(styleControl(getTheme(), model, processKey, processText), padding, 0).render(width), padding);
 			if (process && !model.isProcessOpen(process.id)) return processLine;
 			const parts = model.titleParts(this.toolCallId);
 			if (!parts || width <= 0) return original.call(this, width);
@@ -112,8 +153,8 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 				? (path === undefined ? truncateToWidth(`  ${parts.argument}`, argumentWidth, "…") : `  ${pathTail(path, argumentWidth - 2)}`).replace(/\x1b\[0m/g, "")
 				: "";
 			const text = name + argument + stats;
-			const styled = getTheme()?.fg(model.isCursorHighlighted(`tool:${this.toolCallId}`) ? "accent" : "dim", text) ?? text;
-			const title = indented(new Text(styled, padding, 0).render(width - indent), indent);
+			const styled = styleControl(getTheme(), model, `tool:${this.toolCallId}`, text);
+			const title = hoverRows(getTheme(), model, `tool:${this.toolCallId}`, indented(new Text(styled, padding, 0).render(width - indent), indent), indent + padding);
 			if (!model.isOpen(this.toolCallId)) return [...processLine, ...title];
 			nativeOffset.set(this, { rows: processLine.length + title.length, columns: indent * 2 });
 			return [...processLine, ...title, ...indented(original.call(this, width - indent * 2), indent * 2)];
@@ -127,6 +168,19 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 		if (owners.size === 0) return originalMouse?.call(this, event);
 		const { model } = ownerFor(this);
 		const process = model.processForTool(this.toolCallId);
+		const lead = process && model.isProcessLead(process.id, `tool:${this.toolCallId}`);
+		if (event.type === "move") {
+			// Only the process line and the block title are fold controls; Pi's own rows are not.
+			const titleRow = lead ? 1 : 0;
+			const key = lead && event.y === 0 ? `process:${process!.id}`
+				: event.y === titleRow && (!process || model.isProcessOpen(process.id)) && model.titleParts(this.toolCallId) ? `tool:${this.toolCallId}` : undefined;
+			const changed = setHover(key);
+			const offset = key ? undefined : nativeOffset.get(this);
+			const native = offset && event.y >= offset.rows
+				? originalMouse?.call(this, { ...event, y: event.y - offset.rows, x: event.x === undefined ? undefined : event.x - offset.columns, width: event.width - offset.columns, height: event.height - offset.rows })
+				: undefined;
+			return native ?? (changed ? repaint : undefined);
+		}
 		if (event.type === "click" && event.button === "left" && event.y === 0 && process && model.isProcessLead(process.id, `tool:${this.toolCallId}`)) {
 			model.toggleProcess(process.id);
 			this.ui?.requestRender();
@@ -186,6 +240,7 @@ interface AssistantComponent {
 	outputPad: number;
 	isStreaming: boolean;
 	updateContent(message: Message, isStreaming?: boolean): void;
+	handleMouse?(event: { type: string }): unknown;
 }
 
 interface AssistantClass {
@@ -199,6 +254,10 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 	if (shared) return shared.add({ model, getTheme, requestRender, observeOutputPad });
 	const original = prototype?.updateContent;
 	if (typeof original !== "function") return { installed: false, restore() {} };
+	const originalMouse = prototype.handleMouse;
+	const hadOwnMouse = Object.hasOwn(prototype, "handleMouse");
+	// Set by a thinking region when a move lands on one of its fold controls.
+	let claimedMove = false;
 
 	// The owner is the session that ingested a message with this timestamp. Timestamps are
 	// milliseconds and can coincide across sessions; then the latest claimant whose
@@ -260,6 +319,13 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 				};
 			}
 			const onMouse = (event: { type: string; button: string; y: number }) => {
+				if (event.type === "move") {
+					const titleRow = lead ? 1 : 0;
+					const key = lead && event.y === 0 ? `process:${process!.id}`
+						: event.y === titleRow && (!process || model.isProcessOpen(process.id)) ? `thinking:${message.timestamp}:${run.index}` : undefined;
+					claimedMove = key !== undefined;
+					return setHover(key) ? repaint : undefined;
+				}
 				if (event.type !== "click" || event.button !== "left") return undefined;
 				if (process && lead && event.y === 0) model.toggleProcess(process.id);
 				else if (process && !model.isProcessOpen(process.id)) model.toggleProcess(process.id);
@@ -275,13 +341,15 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 					const padding = Math.min(component.outputPad, Math.max(0, Math.floor((width - 1) / 2)));
 					const processText = lead ? truncateProcessLine(model.processLine(process!.id), width - padding * 2) : undefined;
 					const processLine = processText === undefined ? []
-						: new Text(getTheme()?.fg(model.isCursorHighlighted(`process:${process!.id}`) ? "accent" : "dim", processText) ?? processText, component.outputPad, 0).render(width);
+						: hoverRows(getTheme(), model, `process:${process!.id}`, new Text(styleControl(getTheme(), model, `process:${process!.id}`, processText), component.outputPad, 0).render(width), component.outputPad);
 					if (process && !model.isProcessOpen(process.id)) return processLine;
 					const indent = process && width > padding * 2 + BLOCK_INDENT * 2 ? BLOCK_INDENT : 0;
 					const title = fitThinkingLine(model.thinkingTitle(message, run.index, run.trace, component.isStreaming), width - indent - padding * 2);
-					const styled = getTheme()?.fg(model.isCursorHighlighted(`thinking:${message.timestamp}:${run.index}`) ? "accent" : "dim", title) ?? title;
+					const styled = styleControl(getTheme(), model, `thinking:${message.timestamp}:${run.index}`, title);
 					const body = model.isThinkingOpen(message, run.index) ? indented((native as MouseRegion).child.render(width - indent * 2), indent * 2) : [];
-					return [...processLine, ...indented(new Text(styled, component.outputPad, 0).render(width - indent), indent), ...body];
+					const titleRows = hoverRows(getTheme(), model, `thinking:${message.timestamp}:${run.index}`,
+						indented(new Text(styled, component.outputPad, 0).render(width - indent), indent), indent + component.outputPad);
+					return [...processLine, ...titleRows, ...body];
 				},
 				invalidate() {},
 			};
@@ -299,6 +367,14 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 	}
 
 	prototype.updateContent = folded;
+	// A move over this message that no fold control claims (text, opened trace) ends the hover.
+	function hoverMouse(this: AssistantComponent, event: { type: string }) {
+		claimedMove = false;
+		const result = originalMouse?.call(this, event);
+		if (event.type === "move" && owners.size > 0 && !claimedMove && setHover(undefined)) return result ?? repaint;
+		return result;
+	}
+	prototype.handleMouse = hoverMouse;
 	const owners = new Set<ThinkingOwner>();
 	const add = (owner: ThinkingOwner): Patch => {
 		owners.add(owner);
@@ -307,6 +383,10 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 			// A later wrapper may still call ours; keep it dormant and reusable while attached.
 			if (prototype.updateContent === folded) thinkingOwners.delete(prototype);
 			if (prototype.updateContent === folded) prototype.updateContent = original;
+			if (prototype.handleMouse === hoverMouse && !thinkingOwners.has(prototype)) {
+				if (hadOwnMouse) prototype.handleMouse = originalMouse;
+				else delete prototype.handleMouse;
+			}
 		} };
 	};
 	thinkingOwners.set(prototype, { add });

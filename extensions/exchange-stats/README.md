@@ -29,7 +29,14 @@ Press `ctrl+alt+e` to open or fold every process in the latest exchange. Press
 process, or block, and Escape to close it. The picker marks open items; opening a
 block also opens its process, while folding that block leaves the process open.
 These controls work while an exchange streams and change only the display. In
-fullscreen mode, left click a process line or block title to toggle it.
+fullscreen mode, left click a process line or block title to toggle it. Hovering
+one of these clickable rows brightens its text and puts it on the theme's
+selection background, from its indented start to the right edge; opened native
+output is not highlighted. The highlight follows the pointer across fold rows,
+assistant text and the exchange card; it can stay on a row after the pointer
+moves straight to Pi's own rows (a user message, the editor), until the pointer
+next crosses the transcript. Terminal multiplexers that Pi runs in button-motion
+mode (tmux, screen, zellij) send no hover events, so there is no highlight there.
 
 An experimental transcript cursor is available with `cursorMode: true`. Press
 `ctrl+alt+g` to enter it, Up/Down to move through process lines and the block

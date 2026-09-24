@@ -49,7 +49,7 @@ import { FoldPicker } from "./src/fold-picker.ts";
 import { TranscriptCursor } from "./src/transcript-cursor.ts";
 import { HeadlineLengthError, HeadlineScheduler } from "./src/headline-scheduler.ts";
 import { ToolFoldModel, type FoldBlockRecord, type ThinkingHeadlinePatch } from "./src/tool-fold.ts";
-import { installThinkingFold, installToolFold } from "./src/tool-render.ts";
+import { endHoverOnMove, installThinkingFold, installToolFold } from "./src/tool-render.ts";
 import { Box, Text } from "@earendil-works/pi-tui";
 import type { KeyId } from "@earendil-works/pi-tui";
 
@@ -217,7 +217,7 @@ function unionMs(runs: ToolRun[]): number {
 
 export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof ToolExecutionComponent = ToolExecutionComponent, settingsRuntime: SettingsRuntime = {}) {
 	let toolFold = new ToolFoldModel();
-	let themeContext: { ui: { theme?: { fg(color: "dim" | "accent", text: string): string }; setStatus(key: string, value: string): void } } | undefined;
+	let themeContext: { ui: { theme?: { fg(color: "dim" | "accent" | "muted", text: string): string; bg?(color: "selectedBg", text: string): string }; setStatus(key: string, value: string): void } } | undefined;
 	const getTitleTheme = () => themeContext?.ui.theme;
 	let outputPad = 1;
 	let lastStatus = "";
@@ -383,6 +383,9 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	pi.registerEntryRenderer<ExchangeRecord>(ENTRY_TYPE, (entry, _options, theme) => {
 		const data = entry.data;
 		const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+		// The card is not a fold control: a move onto it ends a fold hover; everything else stays Box's.
+		const boxMouse = box.handleMouse.bind(box);
+		box.handleMouse = (event) => endHoverOnMove(event) ?? boxMouse(event);
 		if (!data) {
 			box.addChild(new Text(theme.fg("dim", "(no stats)"), 0, 0));
 			return box;
