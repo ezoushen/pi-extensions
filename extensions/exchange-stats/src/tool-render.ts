@@ -141,7 +141,7 @@ export function installToolFold(componentClass: ToolClass, model: ToolFoldModel,
 			const progressLine = progress?.lead ? progressRow(model, progress.exchange, getTheme(), padding, width) : [];
 			const withGap = (rows: string[]) => gapBefore && rows.length ? ["", ...rows] : rows;
 			if (progress && !progress.open) return withGap(progressLine);
-			const show = (rows: string[]) => progress ? [...progressLine, ...indented(rows, BLOCK_INDENT)] : rows;
+			const show = (rows: string[]) => progress ? [...progressLine, ...(progressLine.length && rows.length ? [""] : []), ...indented(rows, BLOCK_INDENT)] : rows;
 			if (process && !model.isProcessOpen(process.id) && !model.isProcessLead(process.id, `tool:${this.toolCallId}`)) return [];
 			const contentWidth = width - padding * 2 - (progress ? BLOCK_INDENT : 0);
 			const processText = process && model.isProcessLead(process.id, `tool:${this.toolCallId}`)
@@ -347,7 +347,8 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 				const progress = model.progressForItem(key);
 				if (!progress) return originalRender(width);
 				const line = progress.lead ? progressRow(model, progress.exchange, getTheme(), component.outputPad, width) : [];
-				return progress.open ? [...line, ...indented(originalRender(width - BLOCK_INDENT), BLOCK_INDENT)] : line;
+				const rows = indented(originalRender(width - BLOCK_INDENT), BLOCK_INDENT);
+				return progress.open ? [...line, ...(line.length && rows.length ? [""] : []), ...rows] : line;
 			};
 			const controls = textControls.get(this) ?? [];
 			controls.push({ child: native, key });
@@ -435,7 +436,7 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 					const processText = lead ? truncateProcessLine(model.processLine(process!.id), innerWidth - padding * 2) : undefined;
 					const processLine = processText === undefined ? []
 						: hoverRows(getTheme(), model, `process:${process!.id}`, new Text(styleControl(getTheme(), model, `process:${process!.id}`, processText), component.outputPad, 0).render(innerWidth), component.outputPad);
-					const show = (rows: string[]) => current ? [...progressLine, ...indented(rows, BLOCK_INDENT)] : rows;
+					const show = (rows: string[]) => current ? [...progressLine, ...(progressLine.length && rows.length ? [""] : []), ...indented(rows, BLOCK_INDENT)] : rows;
 					if (process && !model.isProcessOpen(process.id)) return withGap(show(processLine));
 					const indent = process && width > padding * 2 + BLOCK_INDENT * 2 ? BLOCK_INDENT : 0;
 					const title = fitThinkingLine(model.thinkingTitle(message, run.index, run.trace, component.isStreaming), innerWidth - indent - padding * 2);
