@@ -63,13 +63,18 @@ selected transcript row's position; the cursor therefore cannot scroll to it.
 An **exchange** is one uninterrupted work span from a submitted prompt until Pi has
 nothing left to do automatically. A **turn** is one model response plus the tools it
 invokes, so an exchange can contain several turns. The status line shows the current
-or most recent exchange. The transcript card shows the exchange headline, summary,
-and token and cost totals in both collapsed and expanded views. The exchange headline
-includes its finish time when the record has `endedAt`, in the runtime default locale
-and local time zone, in 24-hour `HH:MM:SS` style; it includes the date when that local
-date is not today. Records saved by version 0.1.0 without `endedAt` omit the finish
-time. Session card headlines are unchanged. Block titles carry the individual timing
-and count details.
+or most recent exchange. Exchange and session cards are summary-only and show two
+rows, with no expanded detail. The exchange headline contains its duration, finish
+time when the record has `endedAt`, and model, separated by `·`; it does not include
+an exchange number. The finish time uses the runtime default locale and local time
+zone in 24-hour `HH:MM:SS` style, with the date when that local date is not today.
+Records saved by version 0.1.0 without `endedAt` omit the finish time. The session
+headline keeps its turn and exchange counts and adds `·` before the model. The metrics
+row shows input and output tokens, cache reads as `cache R` with `/ W written` when
+cache writes are nonzero (or `cache W written` when there are writes but no reads),
+waiting time only when nonzero, and total cost at the end even when it is `$0`. It
+omits turns, prompts, tools, thinking, and total-token details. Block titles carry
+individual timing and count details.
 
 Tool time is the union of tool spans, not their sum, so parallel calls are not counted
 twice. Model time is estimated as turn wall time minus tool time. Output throughput is
@@ -177,9 +182,10 @@ Submit a prompt that makes at least one tool call and produces thinking. While i
 streams, check that process lines update and assistant text remains visible. After Pi
 settles, check that one progress line covers the work before the final answer; open it
 to see process lines and interim text grouped beneath it with tree guides, while the
-final answer stays unmarked. Check that exchanges without a process or a trailing answer stay unfolded.
-Expand the exchange card and verify that its summary and token and cost totals match
-the transcript. Open a process to see individual block timings and counts. Run
-`/exstats` and confirm that the session card equals the sum of completed
-exchanges. To check parallel-tool accounting, run two overlapping tools and
-confirm their union is not larger than the exchange wall time.
+final answer stays unmarked. Check that exchanges without a process or a trailing
+answer stay unfolded. Check that the exchange card has only its headline and metrics
+rows, with cost last and no expanded detail. Open a process to see individual block
+timings and counts. Run `/exstats` and confirm the session card keeps its turn and
+exchange counts in the headline and follows the same two-row metrics rules. To check
+parallel-tool accounting, run two overlapping tools and confirm their union is not
+larger than the exchange wall time.
