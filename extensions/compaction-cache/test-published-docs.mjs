@@ -59,6 +59,11 @@ const packageRequirements = {
 		"There are no settings and no environment variables",
 		"Missing usage fields are reported as zero",
 	],
+	"pi-interrupt-steer": [
+		"| `key` | `ctrl+alt+enter` |",
+		"`PI_INTERRUPT_STEER_KEY`",
+		"kitty keyboard protocol",
+	],
 };
 
 function filesUnder(root) {
@@ -142,7 +147,7 @@ test("packed tarballs and git-tracked source contain no private deployment ident
 test("every packed package documents its contract, settings, and unmet behavior", () => {
 	const { temp, packages } = packAll();
 	try {
-		assert.equal(packages.length, 4);
+		assert.equal(packages.length, 5);
 		for (const packed of packages) {
 			const readme = readFileSync(join(packed.root, "README.md"), "utf8");
 			assert.match(readme, /^## External contract$/m, packed.name);
