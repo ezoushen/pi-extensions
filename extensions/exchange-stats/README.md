@@ -57,8 +57,11 @@ An **exchange** is one uninterrupted work span from a submitted prompt until Pi 
 nothing left to do automatically. A **turn** is one model response plus the tools it
 invokes, so an exchange can contain several turns. The status line shows the current
 or most recent exchange. The transcript card shows the exchange headline, summary,
-and token and cost totals in both collapsed and expanded views. Block titles carry
-the individual timing and count details.
+and token and cost totals in both collapsed and expanded views. Its headline includes
+the finish time in the runtime default locale and local time zone, in 24-hour
+`HH:MM:SS` style; it includes the date when that local date is not today. Session
+card headlines are unchanged. Block titles carry the individual timing and count
+details.
 
 Tool time is the union of tool spans, not their sum, so parallel calls are not counted
 twice. Model time is estimated as turn wall time minus tool time. Output throughput is

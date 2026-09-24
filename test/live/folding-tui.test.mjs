@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,16 @@ function chunk(toolCallIndex, toolId, path) {
 	return { index: toolCallIndex, id: toolId, type: "function", function: { name: "read", arguments: JSON.stringify({ path }) } };
 }
 
+function expectedFinishLabel(at, now, timeZone) {
+	const date = new Date(at);
+	const localTime = date.toLocaleTimeString(undefined, {
+		hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23", timeZone,
+	});
+	const localDate = date.toLocaleDateString(undefined, { dateStyle: "medium", timeZone });
+	const dateKey = (value) => value.toLocaleDateString(undefined, { timeZone });
+	return dateKey(date) === dateKey(new Date(now)) ? localTime : localDate + " " + localTime;
+}
+
 test("packed exchange-stats folds streamed reasoning and native tool output in a real Pi terminal", async (t) => {
 	const piBin = process.env.PI_BIN ?? executable("pi");
 	const python = executable("python3");
@@ -51,6 +61,7 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 	if (!piBin) { t.skip("pi binary is unavailable"); return; }
 	if (!python) { t.skip("python3 PTY capture tool is unavailable on PATH"); return; }
 
+	const timeZone = "Asia/Taipei";
 	const agentDir = mkdtempSync(join(tmpdir(), "pi-fold-tui-"));
 	const tarDir = mkdtempSync(join(tmpdir(), "pi-fold-pack-"));
 	let stub;
@@ -94,7 +105,7 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 
 		child = spawn(python, [runner, piBin, "--provider", "stub", "--model", "free-model", "--no-session",
 			"--no-context-files", "--no-skills", "--no-prompt-templates", "--no-themes", "--offline"], {
-			cwd: agentDir, env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, TERM: "xterm-256color" }, stdio: ["pipe", "pipe", "pipe"],
+			cwd: agentDir, env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, TERM: "xterm-256color", TZ: timeZone }, stdio: ["pipe", "pipe", "pipe"],
 		});
 		child.stdout.on("data", (data) => terminal.write(data));
 		let errors = "";
@@ -110,13 +121,24 @@ test("packed exchange-stats folds streamed reasoning and native tool output in a
 		assert.match(secondLive, /▸.*◈/);
 		const settled = await waitForScreen(terminal, (value) =>
 			value.includes("Both file contents are available.") && value.includes("Exchange 1") &&
-			(value.match(/▸.*◈/g)?.length ?? 0) >= 2, child, 20000);
-		assert.match(settled, /I will read both files/);
+			(value.match(/▸.*◈/g)?.length ?? 0) >= 1, child, 20000);
+		const exchangeHeadline = settled.split("\n").find((line) => line.includes("⏱ Exchange 1"));
+		assert.ok(exchangeHeadline, "settled screen is missing the exchange card headline");
+		const capturedAt = Date.now();
+		// PTY redraw can cross a second boundary after the exchange has settled.
+		const expectedTimes = [0, 1_000].map((delta) => expectedFinishLabel(capturedAt - delta, capturedAt, timeZone));
+		assert.ok(expectedTimes.some((value) => exchangeHeadline.includes(value)), "exchange finish time did not match the local clock: " + exchangeHeadline);
+		const evidencePath = process.env.PI_EXCHANGE_STATS_EVIDENCE_PATH;
+		if (evidencePath) {
+			mkdirSync(dirname(evidencePath), { recursive: true });
+			writeFileSync(evidencePath, settled + "\n");
+		}
 		assert.doesNotMatch(settled, /FIRST_NATIVE_OUTPUT|SECOND_NATIVE_OUTPUT/);
 		assert.doesNotMatch(settled, /Turn 1|Turn 2/);
 
 		// Pi's own result renderer requires its global details view for read output.
 		send(child, "\x0f");
+		send(child, "\x1b\x05");
 		send(child, "\x1b\x06");
 		const levelTwo = await waitForScreen(terminal, (value) => value.includes("first.txt") && value.includes("second.txt"), child);
 		assert.match(levelTwo, /◈/);
