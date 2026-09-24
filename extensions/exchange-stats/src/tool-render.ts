@@ -20,6 +20,7 @@ interface ToolClass {
 interface TitleTheme {
 	fg(color: "dim" | "accent" | "muted", text: string): string;
 	bg?(color: "selectedBg", text: string): string;
+	italic?(text: string): string;
 }
 
 // One pointer drives every session's transcript, so the hovered fold control is shared.
@@ -37,11 +38,12 @@ export function endHoverOnMove(event: { type: string }): typeof repaint | undefi
 	return event.type === "move" && setHover(undefined) ? repaint : undefined;
 }
 
-/** Styles a fold control's text: the transcript cursor's accent, else brighter while hovered, else dim (D9). */
+/** Styles fold-control text with its D9 color and the active theme's italic style when available. */
 function styleControl(theme: TitleTheme | undefined, model: ToolFoldModel, key: string, text: string): string {
 	if (!theme) return text;
-	if (model.isCursorHighlighted(key)) return theme.fg("accent", text);
-	return theme.fg(hoveredControl === key ? "muted" : "dim", text);
+	const color = model.isCursorHighlighted(key) ? "accent" : hoveredControl === key ? "muted" : "dim";
+	const colored = theme.fg(color, text);
+	return theme.italic?.(colored) ?? colored;
 }
 
 /**
@@ -49,13 +51,20 @@ function styleControl(theme: TitleTheme | undefined, model: ToolFoldModel, key: 
  * indented start (`leading` columns of plain spaces stay bare) to the right edge.
  */
 function hoverRows(theme: TitleTheme | undefined, model: ToolFoldModel, key: string, lines: string[], leading: number): string[] {
-	if (hoveredControl !== key || model.isCursorHighlighted(key) || !theme?.bg) return lines;
+	if (!theme) return lines;
+	const cursor = model.isCursorHighlighted(key);
+	const color = cursor ? "accent" : hoveredControl === key ? "muted" : "dim";
+	const colorOpen = theme.fg(color, "\u0000").split("\u0000")[0];
+	const italicOpen = theme.italic?.("\u0000").split("\u0000")[0] ?? "";
+	const restoredStyle = colorOpen + italicOpen;
+	const selected = hoveredControl === key && !cursor && theme.bg;
+	if (!selected) return restoredStyle ? lines.map((line) => line.replaceAll("\x1b[0m", `\x1b[0m${restoredStyle}`)) : lines;
 	const [open, close] = theme.bg("selectedBg", "\u0000").split("\u0000");
 	const bare = " ".repeat(leading);
 	return lines.map((line) => {
 		const cut = line.startsWith(bare) ? leading : 0;
-		// Inner full resets would end the background early; reopen it after each one.
-		const body = line.slice(cut).replaceAll("\x1b[0m", `\x1b[0m${open}`).replaceAll("\x1b[49m", `\x1b[49m${open}`);
+		// Full resets end the selection and text styles; reopen them before the rest of the row.
+		const body = line.slice(cut).replaceAll("\x1b[0m", `\x1b[0m${open}${restoredStyle}`).replaceAll("\x1b[49m", `\x1b[49m${open}`);
 		return line.slice(0, cut) + open + body + close;
 	});
 }

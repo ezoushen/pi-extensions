@@ -232,7 +232,7 @@ function unionMs(runs: ToolRun[]): number {
 
 export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof ToolExecutionComponent = ToolExecutionComponent, settingsRuntime: SettingsRuntime = {}) {
 	let toolFold = new ToolFoldModel();
-	let themeContext: { ui: { theme?: { fg(color: "dim" | "accent" | "muted", text: string): string; bg?(color: "selectedBg", text: string): string }; setStatus(key: string, value: string): void } } | undefined;
+	let themeContext: { ui: { theme?: { fg(color: "dim" | "accent" | "muted", text: string): string; bg?(color: "selectedBg", text: string): string; italic?(text: string): string }; setStatus(key: string, value: string): void } } | undefined;
 	const getTitleTheme = () => themeContext?.ui.theme;
 	let outputPad = 1;
 	let lastStatus = "";
@@ -398,11 +398,15 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	pi.registerEntryRenderer<ExchangeRecord>(ENTRY_TYPE, (entry, _options, theme) => {
 		const data = entry.data;
 		const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+		const dimText = (text: string) => {
+			const colored = theme.fg("dim", text);
+			return theme.italic?.(colored) ?? colored;
+		};
 		// The card is not a fold control: a move onto it ends a fold hover; everything else stays Box's.
 		const boxMouse = box.handleMouse.bind(box);
 		box.handleMouse = (event) => endHoverOnMove(event) ?? boxMouse(event);
 		if (!data) {
-			box.addChild(new Text(theme.fg("dim", "(no stats)"), 0, 0));
+			box.addChild(new Text(dimText("(no stats)"), 0, 0));
 			return box;
 		}
 
@@ -413,7 +417,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			: `⏱ Exchange ${data.index} · ${fmtDuration(data.durationMs)}${finishTime}`;
 		box.addChild(
 			new Text(
-				theme.fg("dim", `${headline}  ${data.model}`),
+				dimText(`${headline}  ${data.model}`),
 				0,
 				0,
 			),
@@ -428,7 +432,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		if (data.toolMs > 0) summary.push(`tools ${fmtDuration(data.toolMs)}`);
 		summary.push(`out ${fmtTokens(data.output)}`, fmtCost(data.cost));
 		if (data.waitingMs > 0) summary.push(`waiting ${fmtDuration(data.waitingMs)}`);
-		box.addChild(new Text(theme.fg("dim", summary.join(" · ")), 0, 0));
+		box.addChild(new Text(dimText(summary.join(" · ")), 0, 0));
 
 		const tokenParts = [
 			`in ${fmtTokens(data.input)}`,
@@ -438,7 +442,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			fmtCost(data.cost),
 		];
 		if (data.reasoning > 0) tokenParts.splice(2, 0, `thinking ${fmtTokens(data.reasoning)}`);
-		box.addChild(new Text(theme.fg("dim", tokenParts.join(" · ")), 0, 0));
+		box.addChild(new Text(dimText(tokenParts.join(" · ")), 0, 0));
 
 		return box;
 	});

@@ -24,10 +24,12 @@ Titles also show elapsed time, thinking tokens and rate while streaming; a `~` m
 token estimates when the provider has not reported reasoning usage. Settled titles
 show duration and word count. Opening a block keeps its title and shows Pi's native
 output below it, indented two more columns; a thinking block shows Pi's full trace
-there, regardless of Pi's hide-thinking setting. Process lines and block titles use the
-active Pi theme's dim color, except the line selected by the transcript cursor,
-which uses the theme's accent color while the cursor is active. Visible assistant
-text and opened native content keep Pi's own styling.
+there, regardless of Pi's hide-thinking setting. Process lines, settled progress lines,
+and block titles use the active Pi theme's dim color and italic style, except the line
+selected by the transcript cursor, which uses the theme's accent color and stays
+italic. Picker text and exchange card rows use the same dim italic style; the picker
+border stays upright. Visible assistant text and opened native content keep Pi's own
+styling.
 
 Press `ctrl+alt+f` to toggle the latest process between its line and block titles.
 Press `ctrl+alt+e` to toggle the latest exchange's progress line after it settles;

@@ -11,14 +11,18 @@ const plain = (line) => line.replace(/\x1b\[[0-9;]*m/g, "");
 // Distinct zero-width ANSI per theme colour, so tests can see how each row was styled.
 const FG = { dim: 1, muted: 2, accent: 3 };
 const BG_OPEN = "\x1b[48;5;236m";
-const theme = () => ({
-	fg(color, text) { return `\x1b[38;5;${FG[color]}m${text}\x1b[39m`; },
+const theme = (innerReset = false) => ({
+	fg(color, text) {
+		const body = innerReset ? text.replace(" ", "\x1b[0m ") : text;
+		return `\x1b[38;5;${FG[color]}m${body}\x1b[39m`;
+	},
 	bg(color, text) { assert.equal(color, "selectedBg"); return `${BG_OPEN}${text}\x1b[49m`; },
+	italic(text) { return `\x1b[3m${text}\x1b[23m`; },
 });
 const HOVER = /\x1b\[48;5;236m/;
 const move = (y, height = 40) => ({ type: "move", button: "none", x: 5, y, width: 80, height });
 
-function setup(timestamp) {
+function setup(timestamp, getTheme = theme) {
 	const model = new ToolFoldModel(() => 100);
 	const message = snapshot(timestamp, [
 		{ type: "thinking", thinking: "Checking the setup file." },
@@ -26,8 +30,8 @@ function setup(timestamp) {
 		{ type: "text", text: "Plain answer text." },
 	]);
 	model.ingest(message);
-	const thinkingPatch = installThinkingFold(AssistantMessageComponent, model, theme);
-	const toolPatch = installToolFold(ToolExecutionComponent, model, theme);
+	const thinkingPatch = installThinkingFold(AssistantMessageComponent, model, getTheme);
+	const toolPatch = installToolFold(ToolExecutionComponent, model, getTheme);
 	const assistant = new AssistantMessageComponent();
 	assistant.updateContent(snapshot(timestamp, message.content.map((item) => ({ ...item }))), false);
 	const tool = new ToolExecutionComponent("bash", `hover-${timestamp}`, { command: "echo hover" }, {}, undefined, ui, ".");
@@ -42,11 +46,15 @@ test("hovering a process line highlights it and asks Pi to repaint", () => {
 		const lines = assistant.render(80);
 		const processRow = rowOf(lines, "▸ ◈");
 		assert.ok(processRow >= 0);
+		assert.match(lines[processRow], /\x1b\[3m/);
+		assert.match(lines[processRow], /\x1b\[38;5;1m/);
 		assert.doesNotMatch(lines.join("\n"), HOVER);
 		const result = assistant.handleMouse(move(processRow, lines.length));
 		assert.equal(result?.render, true, "a hover change requests a render");
 		const hovered = assistant.render(80);
 		assert.match(hovered[processRow], HOVER);
+		assert.match(hovered[processRow], /\x1b\[3m/);
+		assert.match(hovered[processRow], /\x1b\[38;5;2m/);
 		assert.equal(hovered.filter((line) => HOVER.test(line)).length, 1, "only the hovered row is highlighted");
 	} finally { restore(); }
 });
@@ -58,9 +66,13 @@ test("hovering a block title highlights only that title; moving onto text clears
 		let toolLines = tool.render(80);
 		const toolTitle = rowOf(toolLines, "⚙ bash  echo");
 		assert.ok(toolTitle >= 0);
+		assert.match(toolLines[toolTitle], /\x1b\[3m/);
+		assert.match(toolLines[toolTitle], /\x1b\[38;5;1m/);
 		tool.handleMouse(move(toolTitle, toolLines.length));
 		toolLines = tool.render(80);
 		assert.match(toolLines[toolTitle], HOVER);
+		assert.match(toolLines[toolTitle], /\x1b\[3m/);
+		assert.match(toolLines[toolTitle], /\x1b\[38;5;2m/);
 		const assistantLines = assistant.render(80);
 		assert.doesNotMatch(assistantLines.join("\n"), HOVER, "hover is exclusive across components");
 
@@ -80,9 +92,13 @@ test("hovering a thinking title highlights it; an opened block's native output i
 		let lines = assistant.render(80);
 		const thinkingTitle = rowOf(lines, "◈ Checking the setup file.");
 		assert.ok(thinkingTitle >= 0);
+		assert.match(lines[thinkingTitle], /\x1b\[3m/);
+		assert.match(lines[thinkingTitle], /\x1b\[38;5;1m/);
 		assistant.handleMouse(move(thinkingTitle, lines.length));
 		lines = assistant.render(80);
 		assert.match(lines[thinkingTitle], HOVER);
+		assert.match(lines[thinkingTitle], /\x1b\[3m/);
+		assert.match(lines[thinkingTitle], /\x1b\[38;5;2m/);
 
 		model.toggle(`hover-903`);
 		let toolLines = tool.render(80);
@@ -97,16 +113,51 @@ test("hovering a thinking title highlights it; an opened block's native output i
 });
 
 test("the transcript cursor's accent wins over hover on the same row", () => {
-	const { model, assistant, rowOf, restore } = setup(904);
+	const { model, assistant, tool, rowOf, restore } = setup(904);
 	try {
 		const lines = assistant.render(80);
 		const processRow = rowOf(lines, "▸ ◈");
 		assistant.handleMouse(move(processRow, lines.length));
+		model.toggleProcess(model.processes()[0].id);
 		assert.equal(model.startCursor(), true);
 		assert.equal(model.isCursorHighlighted(`process:${model.processes()[0].id}`), true);
-		const row = assistant.render(80)[processRow];
+		let row = assistant.render(80)[processRow];
 		assert.match(row, /\x1b\[38;5;3m/);
+		assert.match(row, /\x1b\[3m/);
 		assert.doesNotMatch(row, HOVER);
+		model.cursorMove(1);
+		row = assistant.render(80)[rowOf(assistant.render(80), "◈ Checking the setup file.")];
+		assert.match(row, /\x1b\[38;5;3m/);
+		assert.match(row, /\x1b\[3m/);
+		model.cursorMove(1);
+		row = tool.render(80)[rowOf(tool.render(80), "⚙ bash  echo")];
+		assert.match(row, /\x1b\[38;5;3m/);
+		assert.match(row, /\x1b\[3m/);
+	} finally { restore(); }
+});
+
+test("hovered fold text restores its theme color and italic after an inner reset", () => {
+	const { assistant, rowOf, restore } = setup(907, () => theme(true));
+	try {
+		const lines = assistant.render(80);
+		const processRow = rowOf(lines, "▸ ◈");
+		assistant.handleMouse(move(processRow, lines.length));
+		const row = assistant.render(80)[processRow];
+		assert.match(row, /\x1b\[0m\x1b\[48;5;236m\x1b\[38;5;2m\x1b\[3m ◈/);
+	} finally { restore(); }
+});
+
+test("fold rows render when a theme does not provide italic", () => {
+	const noItalic = () => ({
+		fg(color, text) { return `\x1b[38;5;${FG[color]}m${text}\x1b[39m`; },
+		bg(color, text) { assert.equal(color, "selectedBg"); return `${BG_OPEN}${text}\x1b[49m`; },
+	});
+	const { assistant, rowOf, restore } = setup(908, noItalic);
+	try {
+		const lines = assistant.render(80);
+		const row = lines[rowOf(lines, "▸ ◈")];
+		assert.match(row, /▸ ◈/);
+		assert.doesNotMatch(row, /\x1b\[3m/);
 	} finally { restore(); }
 });
 
