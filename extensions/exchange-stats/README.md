@@ -66,13 +66,13 @@ invokes, so an exchange can contain several turns. The status line shows the cur
 or most recent exchange. Exchange and session cards are summary-only and show one
 line when their content fits; at narrower widths Pi wraps the text without
 truncating its numbers. The exchange line contains its duration, finish time when
-the record has `endedAt`, and model, separated by `·`; input metrics follow the
-model with one space and no `·`. It does not include an exchange number. The finish
-time uses the runtime default locale and local time zone in 24-hour `HH:MM:SS` style,
-with the date when that local date is not today. Records saved by version 0.1.0
-without `endedAt` omit the finish time. The session line keeps its turn and exchange
-counts and follows the same model and metrics layout. The metrics show input and
-output tokens, cache reads as `cache R` with `/ W written` when cache writes are
+the record has `endedAt`, and model, separated by `·`; its metrics follow the model
+in parentheses after one space, separated by `·`. It does not include an exchange
+number. The finish time uses the runtime default locale and local time zone in
+24-hour `HH:MM:SS` style, with the date when that local date is not today. Records
+saved by version 0.1.0 without `endedAt` omit the finish time. The session line keeps
+its turn and exchange counts and follows the same model and metrics layout. Metrics
+show input and output tokens, cache reads as `cache R` with `/ W written` when cache writes are
 nonzero (or `cache W written` when there are writes but no reads), waiting time only
 when nonzero, and total cost at the end even when it is `$0`. Cards omit turns,
 prompts, tools, thinking, and total-token details. Block titles carry individual
@@ -186,9 +186,9 @@ settles, check that one progress line covers the work before the final answer; o
 to see process lines and interim text grouped beneath it with tree guides, while the
 final answer stays unmarked. Check that exchanges without a process or a trailing
 answer stay unfolded. Check that the exchange card uses one line when it fits and
-wraps without truncating numbers at narrower widths, with cost last and no expanded
-detail. Open a process to see individual block timings and counts. Run `/exstats` and
-confirm the session card keeps its turn and exchange counts in the same one-line
-layout and follows the same metrics rules. To check parallel-tool accounting, run
-two overlapping tools and confirm their union is not larger than the exchange wall
-time.
+wraps without truncating numbers at narrower widths, with metrics in parentheses,
+cost last and no expanded detail. Open a process to see individual block timings
+and counts. Run `/exstats` and confirm the session card keeps its turn and exchange
+counts, with metrics in parentheses and following the same metrics rules. To check
+parallel-tool accounting, run two overlapping tools and confirm their union is not
+larger than the exchange wall time.

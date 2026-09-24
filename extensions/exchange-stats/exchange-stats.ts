@@ -430,7 +430,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		if (cache) summary.push(cache);
 		if (data.waitingMs > 0) summary.push(`waiting ${fmtDuration(data.waitingMs)}`);
 		summary.push(fmtCost(data.cost));
-		box.addChild(new Text(dimText(`${headline} · ${data.model} ${summary.join(" · ")}`), 0, 0));
+		box.addChild(new Text(dimText(`${headline} · ${data.model} (${summary.join(" · ")})`), 0, 0));
 
 		return box;
 	});
