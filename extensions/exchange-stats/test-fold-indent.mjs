@@ -85,7 +85,7 @@ test("clicks inside an opened tool's native output reach Pi at native row and wi
 		model.toggle("indent-mouse");
 		const lines = tool.render(80);
 		const header = lines.findIndex((line) => plain(line).includes("⚙ bash  echo")) + 1;
-		assert.equal(header, 2, "process line and title precede the native output");
+		assert.equal(header, 3, "the spacer, process line, and title precede the native output");
 		tool.handleMouse({ type: "click", button: "left", y: header + 2, x: 10, width: 80, height: lines.length });
 		assert.equal(seen.length, 1);
 		assert.equal(seen[0].y, 2, "row is relative to Pi's own output");

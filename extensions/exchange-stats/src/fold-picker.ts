@@ -30,7 +30,7 @@ export class FoldPicker {
 			if (process.exchange !== exchange) {
 				exchange = process.exchange;
 				const id = exchange;
-				items.push({ label: `${this.model.processes().filter((item) => item.exchange === id).every((item) => item.open) ? "▾" : "▸"} Exchange ${id}`, toggle: () => { this.model.toggleExchange(id); } });
+				items.push({ label: `${this.model.isExchangeOpen(id) ? "▾" : "▸"} Exchange ${id}`, toggle: () => { this.model.toggleExchange(id); } });
 			}
 			items.push({ label: `  ${this.model.processLine(process.id)}`, toggle: () => { this.model.toggleProcess(process.id); } });
 			for (const block of process.blocks) {

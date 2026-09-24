@@ -27,6 +27,50 @@ function mount(entries, dir, modelRegistry) {
 	return { handlers, shortcuts, ctx, renderer: () => renderer, picker: () => picker, close: () => handlers.get("session_shutdown")() };
 }
 
+test("a second extension instance restores an answered exchange with one folded progress line", () => {
+	const entries = [];
+	const first = mount(entries);
+	const progress = assistant(701, [
+		{ type: "thinking", thinking: "Inspect the files." },
+		{ type: "text", text: "I found one relevant file." },
+		tool("restored-progress"),
+	]);
+	const final = assistant(702, [{ type: "text", text: "The final answer." }]);
+	let liveProgressLine;
+	try {
+		first.handlers.get("before_agent_start")({}, first.ctx);
+		first.handlers.get("message_update")({ message: progress, assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "Inspect the files." } }, first.ctx);
+		first.handlers.get("message_end")({ message: progress }, first.ctx);
+		entries.push({ type: "message", message: progress });
+		first.handlers.get("message_update")({ message: final, assistantMessageEvent: { type: "text_delta" } }, first.ctx);
+		first.handlers.get("message_end")({ message: final }, first.ctx);
+		entries.push({ type: "message", message: final });
+		first.handlers.get("agent_settled")({}, first.ctx);
+		const live = new AssistantMessageComponent();
+		live.updateContent(assistant(701, progress.content), false);
+		liveProgressLine = live.render(90).map((line) => line.replace(/\x1b\[[0-9;]*m/g, "")).find((line) => line.includes("Worked for"))?.trim();
+		const record = entries.find((entry) => entry.type === "custom" && entry.customType === "exchange-stats").data;
+		assert.equal(typeof record.progressDurationMs, "number");
+		record.blocks[0].startedAt = 0;
+	} finally { first.close(); }
+
+	const second = mount(entries);
+	try {
+		const components = [
+			new AssistantMessageComponent(),
+			new ToolExecutionComponent("bash", "restored-progress", { command: "secret-restored-progress" }, undefined, undefined, { requestRender() {} }, "."),
+			new AssistantMessageComponent(),
+		];
+		components[0].updateContent(assistant(701, progress.content), false);
+		components[2].updateContent(assistant(702, final.content), false);
+		const lines = components.flatMap((component) => component.render(90)).map((line) => line.replace(/\x1b\[[0-9;]*m/g, "")).filter((line) => line.trim());
+		assert.equal(lines.filter((line) => line.includes("Worked for")).length, 1);
+		assert.equal(lines.find((line) => line.includes("Worked for"))?.trim(), liveProgressLine);
+		assert.doesNotMatch(lines.join("\n"), /I found one relevant file|▸ ◈|▾ ◈/);
+		assert.match(lines.at(-1), /The final answer/);
+	} finally { second.close(); }
+});
+
 test("a second extension instance restores a model headline and saved time without another summary call", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "pi-fold-restore-"));
 	const entries = [];
@@ -92,6 +136,7 @@ test("a model headline that resolves after the exchange settles is shown live an
 			await flush();
 		}
 		const live = new AssistantMessageComponent();
+		first.shortcuts.get("ctrl+alt+e")(first.ctx);
 		first.shortcuts.get("ctrl+alt+f")(first.ctx);
 		live.updateContent(assistant(401, content), false);
 		assert.match(live.render(100).join("\n"), /≈ Deferred model headline/);
@@ -100,6 +145,7 @@ test("a model headline that resolves after the exchange settles is shown live an
 		assert.doesNotMatch(JSON.stringify(followUps), /Inspecting deferred|x x x|Done/);
 		first.close();
 		const second = mount(entries, dir, { find: () => ({}), streamSimple: () => { throw new Error("restore must not summarize"); } });
+		second.shortcuts.get("ctrl+alt+e")(second.ctx);
 		second.shortcuts.get("ctrl+alt+f")(second.ctx);
 		const restored = new AssistantMessageComponent();
 		restored.updateContent(assistant(401, content), false);
@@ -131,12 +177,14 @@ test("a final headline failure after the exchange settles reverts the saved mode
 		await flush();
 		pending.shift().reject(new Error("provider down"));
 		await flush();
+		first.shortcuts.get("ctrl+alt+e")(first.ctx);
 		first.shortcuts.get("ctrl+alt+f")(first.ctx);
 		const live = new AssistantMessageComponent();
 		live.updateContent(assistant(501, content), false);
 		assert.match(live.render(100).join("\n"), /◈ Inspecting reverted work\. ·/);
 		first.close();
 		const second = mount(entries, dir, registry);
+		second.shortcuts.get("ctrl+alt+e")(second.ctx);
 		second.shortcuts.get("ctrl+alt+f")(second.ctx);
 		const restored = new AssistantMessageComponent();
 		restored.updateContent(assistant(501, content), false);

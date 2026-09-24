@@ -40,6 +40,17 @@ interface Process {
 	settled: boolean;
 }
 
+type ExchangeItem = { key: string; exchange: number; startedAt: number; kind: "block" | "text" };
+type ExchangeProgress = {
+	exchange: number;
+	lead: string;
+	open: boolean;
+	durationMs: number;
+	thinking: number;
+	tools: number;
+	notes: number;
+};
+
 const MAX_THINKING_MESSAGES = 256;
 
 function elapsed(ms: number): string {
@@ -184,6 +195,9 @@ export class ToolFoldModel {
 	private processById = new Map<string, Process>();
 	private processByBlock = new Map<string, Process>();
 	private seenContent = new Map<number, Set<number>>();
+	private exchangeItems: ExchangeItem[] = [];
+	private progress = new Map<number, ExchangeProgress>();
+	private progressByItem = new Map<string, ExchangeProgress>();
 	private openProcess?: Process;
 	private openThinking = new Set<string>();
 	private currentExchange = 0;
@@ -206,6 +220,9 @@ export class ToolFoldModel {
 		this.processById.clear();
 		this.processByBlock.clear();
 		this.seenContent.clear();
+		this.exchangeItems = [];
+		this.progress.clear();
+		this.progressByItem.clear();
 		this.openProcess = undefined;
 		this.openThinking.clear();
 		this.currentExchange = 0;
@@ -257,7 +274,8 @@ export class ToolFoldModel {
 			}
 			if (seen.has(index)) continue;
 			if (item.type === "text") {
-				if (!item.text) continue;
+				if (!item.text?.trim()) continue;
+				this.exchangeItems.push({ key: `text:${message.timestamp}:${index}`, exchange: Math.max(1, this.currentExchange), startedAt: this.now(), kind: "text" });
 				this.openProcess = undefined;
 			}
 			if (item.type === "toolCall" && item.id) {
@@ -278,12 +296,52 @@ export class ToolFoldModel {
 		}
 		this.openProcess.blocks.push(block);
 		this.processByBlock.set(block.key, this.openProcess);
+		this.exchangeItems.push({ key: block.key, exchange: this.openProcess.exchange, startedAt: this.now(), kind: "block" });
 	}
 
 	processes(): ReadonlyArray<Process> { return this.processList; }
+	hasTextImmediatelyBefore(key: string): boolean {
+		const index = this.exchangeItems.findIndex((item) => item.key === key);
+		const item = this.exchangeItems[index];
+		const previous = index > 0 ? this.exchangeItems[index - 1] : undefined;
+		return previous?.exchange === item?.exchange && previous?.kind === "text";
+	}
+	private progressParts(exchange: number): { items: ExchangeItem[]; final: ExchangeItem } | undefined {
+		const items = this.exchangeItems.filter((item) => item.exchange === exchange);
+		const lastBlock = items.findLastIndex((item) => item.kind === "block");
+		const final = items[lastBlock + 1];
+		return lastBlock >= 0 && final?.kind === "text" ? { items: items.slice(0, lastBlock + 1), final } : undefined;
+	}
+	progressDurationForExchange(exchange: number): number | undefined {
+		const parts = this.progressParts(exchange);
+		if (!parts) return undefined;
+		const first = parts.items.find((item) => item.kind === "block") ?? parts.items[0];
+		const block = first.kind === "block" ? this.processByBlock.get(first.key)?.blocks.find((item) => item.key === first.key) : undefined;
+		const saved = this.pendingThinking.get(first.key) ?? this.saved?.(first.key);
+		const start = saved?.startedAt ?? (block?.kind === "thinking" ? this.thinking.timing(block.message, block.index)?.start : block?.kind === "tool" ? this.blocks.get(block.key.slice(5))?.startedAt : undefined) ?? first.startedAt;
+		return Math.max(0, parts.final.startedAt - start);
+	}
+	progressForItem(key: string): { exchange: number; lead: boolean; open: boolean } | undefined {
+		const progress = this.progressByItem.get(key);
+		return progress && { exchange: progress.exchange, lead: progress.lead === key, open: progress.open };
+	}
+	progressLine(exchange: number): string {
+		const progress = this.progress.get(exchange);
+		if (!progress) return "";
+		return `${progress.open ? "▾" : "▸"} Worked for ${elapsed(progress.durationMs)} · ◈${progress.thinking} ⚙${progress.tools} · ${progress.notes} ${progress.notes === 1 ? "note" : "notes"}`;
+	}
+	toggleProgress(exchange: number): boolean | undefined {
+		const progress = this.progress.get(exchange);
+		if (!progress) return undefined;
+		progress.open = !progress.open;
+		return progress.open;
+	}
 	private cursorRows(): Array<{ key: string; title: string; toggle: () => void }> {
 		const rows: Array<{ key: string; title: string; toggle: () => void }> = [];
 		for (const process of this.processList) {
+			const progress = this.progress.get(process.exchange);
+			if (progress && !rows.some((row) => row.key === `exchange:${process.exchange}`)) rows.push({ key: `exchange:${process.exchange}`, title: this.progressLine(process.exchange), toggle: () => { this.toggleProgress(process.exchange); } });
+			if (progress && !progress.open) continue;
 			const last = process.blocks.at(-1);
 			const detail = last?.kind === "thinking" ? this.thinkingTitle(last.message, last.index, last.trace, false)
 				: last?.kind === "tool" ? this.titleParts(last.key.slice(5)) : undefined;
@@ -301,7 +359,7 @@ export class ToolFoldModel {
 		}
 		return rows;
 	}
-	/** Selects rendered process lines and block titles in transcript order. */
+	/** Selects settled progress lines, process lines, and block titles in transcript order. */
 	startCursor(): boolean {
 		const first = this.cursorRows()[0];
 		if (!first) return false;
@@ -323,8 +381,20 @@ export class ToolFoldModel {
 	cursorTitle(): string | undefined { return this.cursorActive ? this.cursorRows().find((item) => item.key === this.cursorKey)?.title : undefined; }
 	isCursorHighlighted(key: string): boolean { return this.cursorActive && this.cursorKey === key; }
 	beginExchange(index = this.currentExchange + 1): void { this.currentExchange = index; this.openProcess = undefined; }
-	/** Closes the open process and marks every process so far as settled. */
-	endExchange(): void {
+	/** Closes the open process and folds answered progress after the final text is known. */
+	endExchange(durationMs?: number, answered = true): void {
+		if (answered) {
+			const parts = this.progressParts(this.currentExchange);
+			if (parts) {
+				const progress: ExchangeProgress = { exchange: this.currentExchange, lead: parts.items[0].key, open: false,
+					durationMs: durationMs ?? this.progressDurationForExchange(this.currentExchange) ?? 0,
+					thinking: parts.items.filter((item) => item.key.startsWith("thinking:")).length,
+					tools: parts.items.filter((item) => item.key.startsWith("tool:")).length,
+					notes: parts.items.filter((item) => item.kind === "text").length };
+				this.progress.set(this.currentExchange, progress);
+				for (const item of parts.items) this.progressByItem.set(item.key, progress);
+			}
+		}
 		this.openProcess = undefined;
 		for (let index = this.processList.length - 1; index >= 0 && !this.processList[index].settled; index--) this.processList[index].settled = true;
 	}
@@ -333,11 +403,18 @@ export class ToolFoldModel {
 		return process && this.toggleProcess(process.id);
 	}
 	toggleExchange(exchange: number): boolean | undefined {
+		if (this.progress.has(exchange)) return this.toggleProgress(exchange);
 		const processes = this.processList.filter((process) => process.exchange === exchange);
 		if (!processes.length) return undefined;
 		const open = processes.some((process) => !process.open);
 		for (const process of processes) process.open = open;
 		return open;
+	}
+	isExchangeOpen(exchange: number): boolean | undefined {
+		const progress = this.progress.get(exchange);
+		if (progress) return progress.open;
+		const processes = this.processList.filter((process) => process.exchange === exchange);
+		return processes.length ? processes.every((process) => process.open) : undefined;
 	}
 	toggleLatestExchange(): boolean | undefined {
 		const process = this.processList.at(-1);

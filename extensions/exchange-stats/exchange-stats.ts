@@ -136,6 +136,8 @@ interface ExchangeRecord extends TokenTotals {
 	startedAt: number;
 	endedAt: number;
 	durationMs: number;
+	/** Wall time from the first process block to the trailing answer. */
+	progressDurationMs?: number;
 	waitingMs: number;
 	/** Wall time tools held across the span. */
 	toolMs: number;
@@ -363,7 +365,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		let inExchange = false;
 		for (const entry of active) {
 			if (entry.type === "custom" && entry.customType === ENTRY_TYPE && entry.data?.kind === "exchange") {
-				toolFold.endExchange();
+				toolFold.endExchange(entry.data.progressDurationMs ?? entry.data.durationMs);
 				inExchange = false;
 				nextExchange = entry.data.index + 1;
 			} else if (entry.type === "message" && entry.message?.role === "assistant" && Array.isArray(entry.message.content)) {
@@ -374,8 +376,8 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			}
 		}
 		// A trailing exchange without a record is history unless it is the run in flight.
-		if (!running) toolFold.endExchange();
-		else if (!inExchange) toolFold.beginExchange(exchangeIndex);
+		if (!running && inExchange) toolFold.endExchange();
+		else if (running && !inExchange) toolFold.beginExchange(exchangeIndex);
 	}
 
 	// ---- Transcript card ----
@@ -689,6 +691,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		}
 
 		const durationMs = endedAt - startedAt;
+		const progressDurationMs = toolFold.progressDurationForExchange(exchangeIndex);
 		const toolMs = turns.reduce((sum: number, turn: TurnRecord) => sum + turn.toolMs, 0);
 		const record: ExchangeRecord = {
 			...totals,
@@ -700,6 +703,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			startedAt,
 			endedAt,
 			durationMs,
+			...(progressDurationMs === undefined ? {} : { progressDurationMs }),
 			waitingMs,
 			toolMs,
 			model,

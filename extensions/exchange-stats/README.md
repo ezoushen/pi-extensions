@@ -7,6 +7,12 @@ block counts and total wall time, or the current block and its live time while
 streaming. In the running exchange, a tool call that has streamed but not yet started
 shows as `⚙ <tool> queued`. A call whose exchange settled, or was restored, without a
 result shows `no result` in its title and no live activity. At the next fold level, each block has a one-line title in stream order, indented two columns under its process line.
+While an exchange streams, assistant text stays visible. After it settles, an
+exchange with a process and a trailing answer folds its processes and earlier
+assistant text into one dim progress line at the first progress item. Opening that
+line shows the process lines and earlier text beneath it, indented two columns; the
+trailing answer stays visible and unindented. An exchange without a process or a
+trailing answer keeps its existing rows.
 Tool titles show the argument, status, duration, and result line count. Thinking
 titles show the trace's last complete sentence, or `Thinking` until one completes.
 With `summaryModel` configured, a short model headline takes its place when ready;
@@ -20,27 +26,28 @@ show duration and word count. Opening a block keeps its title and shows Pi's nat
 output below it, indented two more columns; a thinking block shows Pi's full trace
 there, regardless of Pi's hide-thinking setting. Process lines and block titles use the
 active Pi theme's dim color, except the line selected by the transcript cursor,
-which uses the theme's accent color while the cursor is active. Assistant text and
-opened native content keep Pi's own styling.
+which uses the theme's accent color while the cursor is active. Visible assistant
+text and opened native content keep Pi's own styling.
 
 Press `ctrl+alt+f` to toggle the latest process between its line and block titles.
-Press `ctrl+alt+e` to open or fold every process in the latest exchange. Press
+Press `ctrl+alt+e` to toggle the latest exchange's progress line after it settles;
+while it streams, the shortcut opens or folds all its processes. Press
 `ctrl+alt+s` to open the picker; use Up/Down and Enter to toggle an exchange,
-process, or block, and Escape to close it. The picker marks open items; opening a
-block also opens its process, while folding that block leaves the process open.
-These controls work while an exchange streams and change only the display. In
-fullscreen mode, left click a process line or block title to toggle it. Hovering
-one of these clickable rows brightens its text and puts it on the theme's
-selection background, from its indented start to the right edge; opened native
-output is not highlighted. The highlight follows the pointer across fold rows,
+process, or block, and Escape to close it. The exchange row toggles settled progress
+or the streaming processes. The picker marks open items; opening a block also opens
+its process, while folding that block leaves the process open. These controls change
+only the display. In fullscreen mode, left click a process line, progress line, or
+block title to toggle it. Hovering one of these rows brightens its text and puts it
+on the theme's selection background, from its indented start to the right edge;
+opened native output is not highlighted. The highlight follows the pointer across fold rows,
 assistant text and the exchange card; it can stay on a row after the pointer
 moves straight to Pi's own rows (a user message, the editor), until the pointer
 next crosses the transcript. Terminal multiplexers that Pi runs in button-motion
 mode (tmux, screen, zellij) send no hover events, so there is no highlight there.
 
 An experimental transcript cursor is available with `cursorMode: true`. Press
-`ctrl+alt+g` to enter it, Up/Down to move through process lines and the block
-titles of open processes, Enter to toggle the highlighted item, and Escape to
+`ctrl+alt+g` to enter it, Up/Down to move through progress and process lines and the
+block titles of open processes, Enter to toggle the highlighted item, and Escape to
 return to the editor. The selected title also appears in the status line, since
 regular terminal scrollback can leave the highlighted line above the viewport.
 Fullscreen Pi exposes scrolling by line, but its extension UI does not expose the
@@ -155,12 +162,13 @@ used by the running Pi. Stage the built package files outside such a tree, or
 pi install npm:pi-exchange-stats
 ```
 
-Submit a prompt that makes at least one tool call and produces thinking, then wait
-for Pi to settle. Check that one process line covers each stretch between pieces of
-assistant text, that its counts and live activity change as blocks arrive, and that
-its total time stops when the process completes. Expand the
-exchange card and verify that its summary and token and cost totals match the
-transcript. Open a process to see individual block timings and counts. Run
+Submit a prompt that makes at least one tool call and produces thinking. While it
+streams, check that process lines update and assistant text remains visible. After Pi
+settles, check that one progress line covers the work before the final answer; open it
+to see process lines and interim text indented beneath it, with the final answer
+unindented. Check that exchanges without a process or a trailing answer stay unfolded.
+Expand the exchange card and verify that its summary and token and cost totals match
+the transcript. Open a process to see individual block timings and counts. Run
 `/exstats` and confirm that the session card equals the sum of completed
 exchanges. To check parallel-tool accounting, run two overlapping tools and
 confirm their union is not larger than the exchange wall time.
