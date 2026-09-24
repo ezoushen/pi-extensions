@@ -6,6 +6,7 @@ const DEFAULT_KEY = "ctrl+alt+enter";
 const KEY_SETTING = { key: { default: DEFAULT_KEY, env: "PI_INTERRUPT_STEER_KEY" } } as const;
 type ShortcutKey = Parameters<ExtensionAPI["registerShortcut"]>[0];
 const IDLE_WAIT_TIMEOUT_MS = 5_000;
+const MESSAGE_ACCEPT_TIMEOUT_MS = 5_000;
 const IDLE_POLL_INTERVAL_MS = 25;
 
 async function waitUntilIdle(ctx: ExtensionContext): Promise<boolean> {
@@ -27,19 +28,48 @@ function isShortcutKey(value: unknown): value is ShortcutKey {
 		base !== undefined && (/^[a-z0-9]$/.test(base) || ["enter", "escape", "tab", "space", "backspace", "delete", "up", "down", "left", "right", "home", "end"].includes(base));
 }
 
-function sendEditorText(pi: ExtensionAPI, ctx: ExtensionContext, text: string): void {
+function waitForAcceptedUserMessage(pi: ExtensionAPI, text: string): Promise<boolean> {
+	return new Promise((resolve) => {
+		let timeout: ReturnType<typeof setTimeout> | undefined;
+		let unsubscribe: (() => void) | undefined;
+		let settled = false;
+		const finish = (accepted: boolean) => {
+			if (settled) return;
+			settled = true;
+			if (timeout !== undefined) clearTimeout(timeout);
+			unsubscribe?.();
+			resolve(accepted);
+		};
+
+		unsubscribe = pi.on("message_start", (event) => {
+			if (event.message.role !== "user") return;
+			const content = event.message.content;
+			const messageText = typeof content === "string"
+				? content
+				: content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+			if (messageText === text) finish(true);
+		});
+		timeout = setTimeout(() => finish(false), MESSAGE_ACCEPT_TIMEOUT_MS);
+
+		try {
+			pi.sendUserMessage(text);
+		} catch {
+			finish(false);
+		}
+	});
+}
+
+async function sendEditorText(pi: ExtensionAPI, ctx: ExtensionContext, text: string): Promise<void> {
 	if (!text) {
 		announce(ctx, "pi-interrupt-steer: nothing to send", "info");
 		return;
 	}
 
-	ctx.ui.setEditorText("");
-	try {
-		pi.sendUserMessage(text);
-	} catch {
-		ctx.ui.setEditorText(text);
-		announce(ctx, "pi-interrupt-steer: could not send the message; text restored to the editor", "warning");
+	if (!await waitForAcceptedUserMessage(pi, text)) {
+		announce(ctx, "pi-interrupt-steer: could not confirm Pi accepted the message; text left in the editor", "warning");
+		return;
 	}
+	if (ctx.ui.getEditorText() === text) ctx.ui.setEditorText("");
 }
 
 export default function registerInterruptSteer(pi: ExtensionAPI, settingsRuntime: SettingsRuntime = {}): void {
@@ -66,7 +96,7 @@ export default function registerInterruptSteer(pi: ExtensionAPI, settingsRuntime
 			const idle = ctx.isIdle();
 			const text = ctx.ui.getEditorText();
 			if (idle) {
-				sendEditorText(pi, ctx, text);
+				await sendEditorText(pi, ctx, text);
 				return;
 			}
 			if (!text && !ctx.hasPendingMessages()) {
@@ -79,7 +109,7 @@ export default function registerInterruptSteer(pi: ExtensionAPI, settingsRuntime
 				announce(ctx, "pi-interrupt-steer: agent did not become idle within 5 seconds; text left in the editor", "warning");
 				return;
 			}
-			sendEditorText(pi, ctx, ctx.ui.getEditorText());
+			await sendEditorText(pi, ctx, ctx.ui.getEditorText());
 		},
 	});
 }
