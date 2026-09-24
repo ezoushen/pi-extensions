@@ -42,7 +42,11 @@ function waitForAcceptedUserMessage(pi: ExtensionAPI, text: string): Promise<boo
 		};
 
 		unsubscribe = pi.on("message_start", (event) => {
-			if (event.message.role === "user") finish(true);
+			const content = event.message.content;
+			const messageText = typeof content === "string"
+				? content
+				: content.filter((part) => part.type === "text").map((part) => part.text).join("");
+			if (event.message.role === "user" && messageText === text) finish(true);
 		});
 		timeout = setTimeout(() => finish(false), MESSAGE_ACCEPT_TIMEOUT_MS);
 
