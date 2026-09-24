@@ -266,3 +266,21 @@ test("picker text rows are italic while its border stays upright", () => {
 	assert.ok(rows.slice(2, -1).every((row) => /\x1b\[3m/.test(row)));
 	assert.doesNotMatch(rows.at(-1), /\x1b\[3m/);
 });
+
+test("clipped picker rows stay dim italic after the ellipsis", () => {
+	const model = new ToolFoldModel(() => 1000);
+	model.beginExchange(1);
+	model.ingest(message(502, [{ type: "thinking", thinking: "Inspecting the whole repository layout before touching any file at all." }, { type: "text", text: "Answer" }]));
+	model.endExchange();
+	const theme = {
+		fg(_color, text) { return `\x1b[38;5;1m${text}\x1b[39m`; },
+		italic(text) { return `\x1b[3m${text}\x1b[23m`; },
+		bg(_color, text) { return text; },
+	};
+	const picker = new FoldPicker(model, () => theme, () => {}, () => {});
+	for (const width of [40, 20]) {
+		const rows = picker.render(width);
+		assert.ok(rows.slice(2, -1).some((row) => row.includes("…")), `a block row is clipped at ${width}`);
+		for (const row of rows.slice(1, -1)) assert.doesNotMatch(row, /\x1b\[0m/, `no reset ends the style early at ${width}: ${JSON.stringify(row)}`);
+	}
+});

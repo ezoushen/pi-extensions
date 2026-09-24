@@ -58,7 +58,8 @@ export class FoldPicker {
 			return theme.bg("customMessageBg", clipped) + theme.bg("customMessageBg", " ".repeat(Math.max(0, width - visibleWidth(clipped))));
 		};
 		const styleText = (content: string, availableWidth = width) => {
-			const clipped = truncateToWidth(content, availableWidth, "…");
+			// Labels are plain text; the only resets are truncation's around "…", which would end the style early.
+			const clipped = truncateToWidth(content, availableWidth, "…").replaceAll("\x1b[0m", "");
 			const colored = theme.fg("dim", clipped);
 			return theme.italic?.(colored) ?? colored;
 		};
