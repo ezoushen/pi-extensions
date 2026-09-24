@@ -63,7 +63,7 @@ function expectedFinishLabel(at, now, timeZone) {
 
 function exchangeCardRows(value) {
 	const rows = value.split("\n").map((line) => line.trim());
-	const cardPattern = /^(⏱ (?:\d+(?:\.\d+)?ms|\d+(?:\.\d+)?s|\d+m(?:\d+s)?) · .+ · free-model)(?: (.*))?$/;
+	const cardPattern = /^(⏱ (?:\d+(?:\.\d+)?ms|\d+(?:\.\d+)?s|\d+m(?:\d+s)?) · .+ · free-model)(?: \((.*)\))?$/;
 	const metricsPattern = /^in \S+ · out \S+(?: · cache .+)?(?: · waiting \S+)? · \$0$/;
 	const cards = rows.map((line) => cardPattern.exec(line)).filter(Boolean);
 	const latest = cards.at(-1);
@@ -77,16 +77,23 @@ function exchangeCardRows(value) {
 }
 
 test("exchangeCardRows reads the headline and metrics from one row", () => {
-	const value = "⏱ 2s · 13:38:35 · free-model in 9.5k · out 234 · $0";
+	const value = "⏱ 2s · 13:38:35 · free-model (in 9.5k · out 234 · $0)";
 	const result = exchangeCardRows(value);
 	assert.equal(result.count, 1);
 	assert.equal(result.headline, "⏱ 2s · 13:38:35 · free-model");
 	assert.equal(result.metrics, "in 9.5k · out 234 · $0");
 });
 
+test("exchangeCardRows rejects unparenthesized metrics", () => {
+	const value = "⏱ 2s · 13:38:35 · free-model in 9.5k · out 234 · $0";
+	const result = exchangeCardRows(value);
+	assert.equal(result.count, 0);
+	assert.equal(result.metrics, undefined);
+});
+
 test("exchangeCardRows does not pair the latest headline with earlier metrics", () => {
 	const value = [
-		"⏱ 1s · 13:38:34 · free-model in 9.5k · out 234 · $0",
+		"⏱ 1s · 13:38:34 · free-model (in 9.5k · out 234 · $0)",
 		"⏱ 2s · 13:38:35 · free-model",
 	].join("\n");
 	const result = exchangeCardRows(value);
