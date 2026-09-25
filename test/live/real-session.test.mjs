@@ -241,6 +241,7 @@ test("packed tarballs, installed into a scratch agent directory, load and act in
 					["compaction-cache-status", "compaction-cache"],
 					["exstats", "focus-mode"],
 					["memory-status", "cmem"],
+					["memory-set", "cmem"],
 				]) {
 					assert.ok(commandsByName[cmd], `missing command: ${cmd}`);
 					assert.equal(
