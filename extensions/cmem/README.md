@@ -40,9 +40,10 @@ claude-mem settings, global or trusted-project config paths, or environment vari
 The same info block shows session counts for observations sent, skipped, and
 truncated, digests injected, and the character length of the last non-empty digest.
 Settings remain visible when the worker is unreachable. Skipped results are those
-without a tool name or from `memory_recall`; truncated observations use the existing
-1,000-character response limit. The sent count tracks Pi's observation submissions;
-it does not confirm that the worker persisted each one.
+without a tool name, from `memory_recall`, or named in `skipTools`. Captured responses
+above `maxObservationChars` (default 1,000; minimum 200) are truncated with a marker.
+The sent count tracks Pi's observation submissions; it does not confirm that the
+worker persisted each one.
 
 ## Settings
 
@@ -64,6 +65,8 @@ discovery.
 |---|---|---|---|
 | `disabled` | `false` | `PI_CMEM_DISABLED=1` | Disable bridge activity. |
 | `capture` | `true` | `PI_CMEM_CAPTURE=0` | Write prompts, tool observations, and summaries through the worker. |
+| `skipTools` | `[]` | `PI_CMEM_SKIP_TOOLS` | Comma-separated Pi tool names to omit from captured observations; `memory_recall` is always skipped. Invalid config values use `[]` with a warning. |
+| `maxObservationChars` | `1000` | `PI_CMEM_MAX_OBSERVATION_CHARS` | Maximum captured response length; must be an integer of at least 200. Invalid values use `1000` with a warning. |
 | `inject` | `false` | `PI_CMEM_INJECT=1` | Inject a worker-produced context digest before each turn. |
 | `workerHost` | `"127.0.0.1"` | `PI_CMEM_WORKER_HOST` | claude-mem worker host; discovered from claude-mem's own settings when not set explicitly. |
 | `workerPort` | `37777` | `PI_CMEM_WORKER_PORT` | claude-mem worker port; discovered from claude-mem's own settings when not set explicitly. |
@@ -75,6 +78,8 @@ Example:
 ```json
 {
   "capture": true,
+  "skipTools": ["read"],
+  "maxObservationChars": 300,
   "inject": false,
   "project": "shared-repository"
 }

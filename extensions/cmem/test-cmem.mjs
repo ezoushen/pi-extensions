@@ -16,6 +16,30 @@ process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-cmem-test-agent
 
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const sourcePath = join(packageRoot, "cmem.ts");
+const CMEM_ENV_NAMES = [
+	"PI_CMEM_DISABLED",
+	"PI_CMEM_CAPTURE",
+	"PI_CMEM_INJECT",
+	"PI_CMEM_WORKER_HOST",
+	"PI_CMEM_WORKER_PORT",
+	"PI_CMEM_PROJECT",
+	"PI_CMEM_FALLBACK_PATH",
+	"PI_CMEM_SKIP_TOOLS",
+	"PI_CMEM_MAX_OBSERVATION_CHARS",
+	"CLAUDE_MEM_DATA_DIR",
+];
+
+function isolateCmemEnvironment(overrides = {}) {
+	const previous = new Map(CMEM_ENV_NAMES.map((name) => [name, process.env[name]]));
+	for (const name of CMEM_ENV_NAMES) delete process.env[name];
+	for (const [name, value] of Object.entries(overrides)) process.env[name] = value;
+	return () => {
+		for (const [name, value] of previous) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	};
+}
 
 function harness() {
 	const handlers = new Map();
@@ -205,6 +229,8 @@ test("memory-status reports effective setting provenance and session activity", 
 		"PI_CMEM_WORKER_PORT",
 		"PI_CMEM_PROJECT",
 		"PI_CMEM_FALLBACK_PATH",
+		"PI_CMEM_SKIP_TOOLS",
+		"PI_CMEM_MAX_OBSERVATION_CHARS",
 		"CLAUDE_MEM_DATA_DIR",
 	];
 	const previousEnvironment = new Map(envNames.map((name) => [name, process.env[name]]));
@@ -317,9 +343,13 @@ test("memory-status includes effective settings when the worker is unreachable",
 		"PI_CMEM_WORKER_PORT",
 		"PI_CMEM_PROJECT",
 		"PI_CMEM_FALLBACK_PATH",
+		"PI_CMEM_SKIP_TOOLS",
+		"PI_CMEM_MAX_OBSERVATION_CHARS",
+		"CLAUDE_MEM_DATA_DIR",
 	];
 	const previousEnvironment = new Map(envNames.map((name) => [name, process.env[name]]));
 	for (const name of envNames) delete process.env[name];
+	process.env.CLAUDE_MEM_DATA_DIR = join(tmpdir(), "pi-cmem-no-worker-settings");
 
 	const notifications = [];
 	const setup = sessionFixture({ workerHost: "127.0.0.1", workerPort: 1, capture: false }, notifications);
@@ -340,5 +370,122 @@ test("memory-status includes effective settings when the worker is unreachable",
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;
 		}
+	}
+});
+
+test("capture skips configured tools and applies the configured observation limit", async () => {
+	const restoreEnvironment = isolateCmemEnvironment({
+		CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings"),
+	});
+
+	const observations = [];
+	let resolveBashObservation;
+	const bashObservationReceived = new Promise((resolve, reject) => {
+		const timeout = setTimeout(() => reject(new Error("timed out waiting for bash observation")), 2_000);
+		resolveBashObservation = () => {
+			clearTimeout(timeout);
+			resolve();
+		};
+	});
+	const server = createServer(async (request, response) => {
+		if (request.url === "/api/health") {
+			response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: "test-worker" }));
+			return;
+		}
+		if (request.url === "/api/sessions/observations") {
+			const chunks = [];
+			for await (const chunk of request) chunks.push(chunk);
+			const observation = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+			observations.push(observation);
+			response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+			if (observation.tool_name === "bash") resolveBashObservation();
+			return;
+		}
+		response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+	});
+
+	const notifications = [];
+	let setup;
+	try {
+		await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		assert.ok(address && typeof address === "object");
+		setup = sessionFixture(
+			{ workerHost: "127.0.0.1", workerPort: address.port, skipTools: ["read"], maxObservationChars: 300 },
+			notifications,
+		);
+
+		const runtime = harness();
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+		runtime.handlers.get("tool_result")({ toolName: "read", input: {}, content: [{ type: "text", text: "ignored" }] });
+		runtime.handlers.get("tool_result")({ toolName: "bash", input: {}, content: [{ type: "text", text: "x".repeat(2_000) }] });
+		runtime.handlers.get("tool_result")({ toolName: "memory_recall", input: {}, content: [{ type: "text", text: "ignored" }] });
+		await bashObservationReceived;
+		await runtime.commands.get("memory-status").handler("", setup.context);
+
+		assert.equal(observations.length, 1);
+		assert.equal(observations[0].tool_name, "bash");
+		assert.equal(observations[0].tool_response.length, 300);
+		assert.ok(observations[0].tool_response.endsWith("[truncated]"));
+		assert.ok(notifications.at(-1).message.includes("observations sent: 1; skipped: 2; truncated: 1"));
+		const projectSettingsPath = join(setup.context.cwd, CONFIG_DIR_NAME, "pi-cmem.json");
+		assert.ok(notifications.at(-1).message.includes(`skipTools: ["read"] (project: ${projectSettingsPath})`));
+		assert.ok(notifications.at(-1).message.includes(`maxObservationChars: 300 (project: ${projectSettingsPath})`));
+	} finally {
+		if (server.listening) await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		if (setup) rmSync(setup.root, { recursive: true, force: true });
+		restoreEnvironment();
+	}
+});
+
+test("invalid capture settings fall back to defaults with one warning each", async () => {
+	const restoreEnvironment = isolateCmemEnvironment({
+		CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings"),
+	});
+
+	const notifications = [];
+	const setup = sessionFixture({ workerHost: "127.0.0.1", workerPort: 1, skipTools: "read", maxObservationChars: 199 }, notifications);
+	const runtime = harness();
+	try {
+		cmemExtension(runtime.pi);
+		await assert.doesNotReject(() => runtime.handlers.get("session_start")({}, setup.context));
+		await runtime.commands.get("memory-status").handler("", setup.context);
+
+		const invalidWarnings = notifications.filter((item) => item.level === "warning" && item.message.includes("invalid "));
+		assert.equal(invalidWarnings.length, 2);
+		assert.ok(invalidWarnings.some((item) => item.message.includes("invalid skipTools")));
+		assert.ok(invalidWarnings.some((item) => item.message.includes("invalid maxObservationChars")));
+		assert.ok(notifications.at(-1).message.includes("skipTools: [] (default)"));
+		assert.ok(notifications.at(-1).message.includes("maxObservationChars: 1000 (default)"));
+	} finally {
+		rmSync(setup.root, { recursive: true, force: true });
+		restoreEnvironment();
+	}
+});
+
+test("invalid observation limit from the environment uses its default with one warning", async () => {
+	const restoreEnvironment = isolateCmemEnvironment({
+		PI_CMEM_SKIP_TOOLS: " read , bash ",
+		PI_CMEM_MAX_OBSERVATION_CHARS: "garbage",
+		CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings"),
+	});
+
+	const notifications = [];
+	const setup = sessionFixture({ workerHost: "127.0.0.1", workerPort: 1 }, notifications);
+	const runtime = harness();
+	try {
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+		await runtime.commands.get("memory-status").handler("", setup.context);
+
+		const invalidWarnings = notifications.filter((item) => item.level === "warning" && item.message.includes("invalid "));
+		assert.equal(invalidWarnings.length, 1);
+		assert.ok(invalidWarnings[0].message.includes("invalid maxObservationChars"));
+		assert.ok(notifications.at(-1).message.includes('skipTools: ["read","bash"] (environment: PI_CMEM_SKIP_TOOLS)'));
+		assert.ok(notifications.at(-1).message.includes("maxObservationChars: 1000 (default)"));
+	} finally {
+		rmSync(setup.root, { recursive: true, force: true });
+		restoreEnvironment();
 	}
 });

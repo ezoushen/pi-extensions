@@ -31,6 +31,8 @@
  * Environment switches:
  *   PI_CMEM_DISABLED=1     disable bridge activity
  *   PI_CMEM_CAPTURE=0      recall only, no observation write-back (default: capture on)
+ *   PI_CMEM_SKIP_TOOLS=<names> comma-separated pi tool names to omit from capture (default: none)
+ *   PI_CMEM_MAX_OBSERVATION_CHARS=<chars> captured response limit (minimum: 200; default: 1000)
  *   PI_CMEM_INJECT=1       inject a context digest before each turn (default: off; costs tokens)
  *   PI_CMEM_PROJECT=<name> override the project name (default: cwd basename)
  *   PI_CMEM_WORKER_HOST=<host> worker host (default: 127.0.0.1)
@@ -63,6 +65,7 @@ const DEFAULT_WORKER_PORT = 37777;
 const WORKER_TIMEOUT_MS = 8_000;
 const CHROMA_TIMEOUT_MS = 30_000;
 const MAX_OBSERVATION_CHARS = 1_000;
+const MIN_OBSERVATION_CHARS = 200;
 const MAX_SEARCH_LIMIT = 100;
 const SESSION_COMPLETE_DELAY_MS = 3_000;
 
@@ -124,6 +127,12 @@ const SETTING_DEFINITIONS = {
 	},
 	project: { default: "", env: "PI_CMEM_PROJECT" },
 	fallbackPath: { default: "", env: "PI_CMEM_FALLBACK_PATH" },
+	skipTools: {
+		default: [] as string[],
+		env: "PI_CMEM_SKIP_TOOLS",
+		parseEnv: (value: string) => value.split(",").map((tool) => tool.trim()).filter(Boolean),
+	},
+	maxObservationChars: { default: MAX_OBSERVATION_CHARS, env: "PI_CMEM_MAX_OBSERVATION_CHARS", parseEnv: Number },
 };
 
 let disabled = false;
@@ -133,6 +142,8 @@ let host = "127.0.0.1";
 let port = DEFAULT_WORKER_PORT;
 let configuredProject = "";
 let fallbackChromaScript = "";
+let skipTools: string[] = [];
+let maxObservationChars = MAX_OBSERVATION_CHARS;
 
 function baseUrl(): string {
 	return `http://${host}:${port}`;
@@ -247,14 +258,14 @@ let sessionCwd = process.cwd();
 let workerHealthy = true;
 
 function observationPayload(toolName: string, input: unknown, responseText: string) {
-	const truncated = responseText.length > MAX_OBSERVATION_CHARS;
+	const truncated = responseText.length > maxObservationChars;
 	return {
 		truncated,
 		payload: {
 			contentSessionId,
 			tool_name: toolName,
 			tool_input: input ?? {},
-			tool_response: truncated ? `${responseText.slice(0, MAX_OBSERVATION_CHARS - 12)} [truncated]` : responseText,
+			tool_response: truncated ? `${responseText.slice(0, maxObservationChars - 12)} [truncated]` : responseText,
 			cwd: sessionCwd,
 			platformSource: PLATFORM_SOURCE,
 		},
@@ -328,6 +339,24 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 	// --- session_start: resolve this project's settings and check the worker ---
 	pi.on("session_start", async (_event, ctx) => {
 		const resolved = resolveSettings("pi-cmem", SETTING_DEFINITIONS, ctx);
+		if (!Array.isArray(resolved.skipTools.value) || resolved.skipTools.value.some((tool) => typeof tool !== "string")) {
+			announce(
+				ctx,
+				"pi-cmem: invalid skipTools setting; expected an array of tool names; using default [].",
+				"warning",
+				"pi-cmem-invalid-skipTools",
+			);
+			resolved.skipTools = { value: [], provenance: { source: "default" } };
+		}
+		if (!Number.isInteger(resolved.maxObservationChars.value) || resolved.maxObservationChars.value < MIN_OBSERVATION_CHARS) {
+			announce(
+				ctx,
+				`pi-cmem: invalid maxObservationChars setting; expected an integer of at least ${MIN_OBSERVATION_CHARS}; using default ${MAX_OBSERVATION_CHARS}.`,
+				"warning",
+				"pi-cmem-invalid-maxObservationChars",
+			);
+			resolved.maxObservationChars = { value: MAX_OBSERVATION_CHARS, provenance: { source: "default" } };
+		}
 		effectiveSettings = resolved;
 		sessionCounters = newSessionCounters();
 		disabled = resolved.disabled.value;
@@ -337,6 +366,8 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 		port = resolved.workerPort.value;
 		configuredProject = resolved.project.value;
 		fallbackChromaScript = resolved.fallbackPath.value;
+		skipTools = resolved.skipTools.value;
+		maxObservationChars = resolved.maxObservationChars.value;
 		preflightAnnounced = false;
 		if (disabled) return;
 
@@ -420,7 +451,7 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 	pi.on("tool_result", (event) => {
 		if (!captureEnabled || !contentSessionId || !workerHealthy) return;
 		const toolName = event.toolName;
-		if (!toolName || toolName === "memory_recall") {
+		if (!toolName || toolName === "memory_recall" || skipTools.includes(toolName)) {
 			sessionCounters.observationsSkipped += 1;
 			return;
 		}
