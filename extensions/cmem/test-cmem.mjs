@@ -48,6 +48,7 @@ function harness() {
 	const tools = new Map();
 	const commands = new Map();
 	const notifications = [];
+	const entries = [];
 	return {
 		pi: {
 			on(name, handler) {
@@ -59,12 +60,15 @@ function harness() {
 			registerCommand(name, command) {
 				commands.set(name, command);
 			},
-			appendEntry() {},
+			appendEntry(type, data) {
+				entries.push({ type, data });
+			},
 		},
 		handlers,
 		tools,
 		commands,
 		notifications,
+		entries,
 	};
 }
 
@@ -86,6 +90,8 @@ function sessionFixture(settings, notifications = []) {
 
 async function fakeWorker(digest = "session digest") {
 	const observations = [];
+	const prompts = [];
+	const summaries = [];
 	const projectsBySession = new Map();
 	const observationWaiters = [];
 	let digestCalls = 0;
@@ -99,15 +105,22 @@ async function fakeWorker(digest = "session digest") {
 			response.writeHead(200, { "Content-Type": "text/plain" }).end(digest);
 			return;
 		}
-		if (request.url === "/api/sessions/init" || request.url === "/api/sessions/observations") {
+		if (["/api/sessions/init", "/api/sessions/observations", "/api/sessions/summarize"].includes(request.url)) {
 			const chunks = [];
 			for await (const chunk of request) chunks.push(chunk);
 			const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
 			if (request.url === "/api/sessions/init") {
-				projectsBySession.set(body.contentSessionId, body.project);
+				if (!projectsBySession.get(body.contentSessionId)) {
+					projectsBySession.set(body.contentSessionId, body.project);
+				}
+				prompts.push({ ...body, sessionProject: projectsBySession.get(body.contentSessionId) });
 			} else {
-				observations.push({ ...body, sessionProject: projectsBySession.get(body.contentSessionId) });
-				observationWaiters.shift()?.();
+				if (request.url === "/api/sessions/observations") {
+					observations.push({ ...body, sessionProject: projectsBySession.get(body.contentSessionId) });
+					observationWaiters.shift()?.();
+				} else if (request.url === "/api/sessions/summarize") {
+					summaries.push({ ...body, sessionProject: projectsBySession.get(body.contentSessionId) });
+				}
 			}
 			response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
 			return;
@@ -120,6 +133,8 @@ async function fakeWorker(digest = "session digest") {
 	return {
 		port: address.port,
 		observations,
+		prompts,
+		summaries,
 		projectsBySession,
 		get digestCalls() {
 			return digestCalls;
@@ -467,7 +482,7 @@ test("memory-set injection overrides use before_agent_start once per prompt", as
 	}
 });
 
-test("memory-set capture options skip tools, truncate results, and switch the session project", async () => {
+test("memory-set project overrides use separate claude-mem sessions and reset to the startup session", async () => {
 	const restoreEnvironment = isolateCmemEnvironment({ CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings") });
 	const worker = await fakeWorker();
 	let setup;
@@ -477,6 +492,7 @@ test("memory-set capture options skip tools, truncate results, and switch the se
 		const runtime = harness();
 		cmemExtension(runtime.pi);
 		await runtime.handlers.get("session_start")({}, setup.context);
+		await runtime.handlers.get("before_agent_start")({ prompt: "initial project" }, setup.context);
 
 		const set = runtime.commands.get("memory-set");
 		assert.ok(set, "memory-set command is registered");
@@ -485,21 +501,54 @@ test("memory-set capture options skip tools, truncate results, and switch the se
 		await set.handler("project other", setup.context);
 		await runtime.handlers.get("before_agent_start")({ prompt: "capture under other" }, setup.context);
 		runtime.handlers.get("tool_result")({ toolName: "read", input: {}, content: [{ type: "text", text: "skipped" }] });
-		const observationReceived = worker.waitForObservation();
+		const otherObservationReceived = worker.waitForObservation();
 		runtime.handlers.get("tool_result")({ toolName: "bash", input: {}, content: [{ type: "text", text: "x".repeat(2_000) }] });
-		await observationReceived;
+		await otherObservationReceived;
 		await runtime.commands.get("memory-status").handler("", setup.context);
-
-		assert.equal(worker.observations.length, 1);
-		assert.equal(worker.observations[0].tool_name, "bash");
-		assert.equal(worker.observations[0].tool_response.length, 300);
-		assert.ok(worker.observations[0].tool_response.endsWith("[truncated]"));
-		assert.equal(worker.observations[0].sessionProject, "other");
-		assert.ok(notifications.at(-1).message.includes("project: other | session:"));
+		assert.ok(notifications.at(-1).message.includes("project: other | session: session-id:other"));
 		assert.ok(notifications.at(-1).message.includes('skipTools: ["read","ls"] (session override)'));
 		assert.ok(notifications.at(-1).message.includes("maxObservationChars: 300 (session override)"));
 		assert.ok(notifications.at(-1).message.includes('project: "other" (session override)'));
 		assert.ok(notifications.at(-1).message.includes("observations sent: 1; skipped: 1; truncated: 1"));
+		await runtime.handlers.get("agent_end")({ messages: [] }, setup.context);
+
+		await set.handler("reset", setup.context);
+		await runtime.handlers.get("before_agent_start")({ prompt: "capture after reset" }, setup.context);
+		const resetObservationReceived = worker.waitForObservation();
+		runtime.handlers.get("tool_result")({ toolName: "bash", input: {}, content: [{ type: "text", text: "after reset" }] });
+		await resetObservationReceived;
+		await runtime.handlers.get("agent_end")({ messages: [] }, setup.context);
+		await runtime.commands.get("memory-status").handler("", setup.context);
+
+		assert.deepEqual(worker.prompts.map(({ contentSessionId, sessionProject }) => ({ contentSessionId, sessionProject })), [
+			{ contentSessionId: "session-id", sessionProject: "project" },
+			{ contentSessionId: "session-id:other", sessionProject: "other" },
+			{ contentSessionId: "session-id", sessionProject: "project" },
+		]);
+		assert.deepEqual(worker.projectsBySession, new Map([
+			["session-id", "project"],
+			["session-id:other", "other"],
+		]));
+		assert.deepEqual(worker.observations.map(({ contentSessionId, sessionProject }) => ({ contentSessionId, sessionProject })), [
+			{ contentSessionId: "session-id:other", sessionProject: "other" },
+			{ contentSessionId: "session-id", sessionProject: "project" },
+		]);
+		assert.deepEqual(worker.summaries.map(({ contentSessionId, sessionProject }) => ({ contentSessionId, sessionProject })), [
+			{ contentSessionId: "session-id:other", sessionProject: "other" },
+			{ contentSessionId: "session-id", sessionProject: "project" },
+		]);
+		assert.deepEqual(runtime.entries.map(({ type, data }) => ({ type, ...data })), [
+			{ type: "pi-cmem-session", contentSessionId: "session-id", project: "project", worker: `http://127.0.0.1:${worker.port}` },
+			{ type: "pi-cmem-session", contentSessionId: "session-id:other", project: "other", worker: `http://127.0.0.1:${worker.port}` },
+			{ type: "pi-cmem-session", contentSessionId: "session-id", project: "project", worker: `http://127.0.0.1:${worker.port}` },
+		]);
+		assert.equal(worker.observations.length, 2);
+		assert.equal(worker.observations[0].tool_name, "bash");
+		assert.equal(worker.observations[0].tool_response.length, 300);
+		assert.ok(worker.observations[0].tool_response.endsWith("[truncated]"));
+		assert.equal(worker.observations[1].tool_response, "after reset");
+		assert.ok(notifications.at(-1).message.includes("project: project | session: session-id"));
+		assert.ok(notifications.at(-1).message.includes("observations sent: 2; skipped: 1; truncated: 1"));
 	} finally {
 		await worker.close();
 		if (setup) rmSync(setup.root, { recursive: true, force: true });

@@ -329,6 +329,8 @@ async function searchViaChromaScript(query: string, limit: number, signal?: Abor
 // ---------------------------------------------------------------------------
 
 let contentSessionId: string | null = null;
+let baseContentSessionId: string | null = null;
+let sessionStartProject = "unknown";
 let sessionProject = "unknown";
 let sessionCwd = process.cwd();
 let workerHealthy = true;
@@ -346,6 +348,14 @@ function observationPayload(toolName: string, input: unknown, responseText: stri
 			platformSource: PLATFORM_SOURCE,
 		},
 	};
+}
+
+function setSessionProject(project: string, pi: ExtensionAPI): void {
+	if (project === sessionProject) return;
+	sessionProject = project;
+	if (!baseContentSessionId) return;
+	contentSessionId = project === sessionStartProject ? baseContentSessionId : `${baseContentSessionId}:${project}`;
+	pi.appendEntry("pi-cmem-session", { contentSessionId, project: sessionProject, worker: baseUrl() });
 }
 
 type SessionCounters = {
@@ -486,13 +496,14 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 		sessionProject = projectName(ctx.cwd);
 		if (disabled) return;
 
-		// Pi's own session id, so a resumed or continued pi session keeps writing to the SAME
-		// claude-mem row (promptNumber increments) instead of fragmenting into a fresh session
-		// per process. Pi session ids are UUIDv7, the same shape claude and codex already write.
-		// Falls back to a synthetic id if the session manager is unavailable.
+		// Keep Pi's session id as the base: resumed sessions reuse its worker row, while a
+		// project override derives a separate row from it. Pi session ids are UUIDv7, the same
+		// shape claude and codex already write. Falls back to a synthetic id if unavailable.
 		const piSession =
 			typeof ctx.sessionManager?.getSessionId === "function" ? ctx.sessionManager.getSessionId() : null;
-		contentSessionId = piSession || `pi-${sessionProject}-${Date.now()}`;
+		sessionStartProject = sessionProject;
+		baseContentSessionId = piSession || `pi-${sessionProject}-${Date.now()}`;
+		contentSessionId = baseContentSessionId;
 		workerHealthy = await workerAlive();
 		if (!workerHealthy && !preflightAnnounced) {
 			const recallCost = fallbackChromaScript && existsSync(fallbackChromaScript)
@@ -615,6 +626,7 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", () => {
 		contentSessionId = null;
+		baseContentSessionId = null;
 	});
 
 	// --- the one and only recall tool (name unchanged from v1) ---
@@ -696,7 +708,7 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 			if (input === "reset") {
 				sessionOverrides = {};
 				applyCurrentSettings();
-				sessionProject = projectName(sessionCwd);
+				setSessionProject(projectName(sessionCwd), pi);
 				announce(ctx, "pi-cmem: session overrides reset.", "info");
 				return;
 			}
@@ -724,7 +736,7 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 
 			sessionOverrides = { ...sessionOverrides, [result.key]: result.value };
 			applyCurrentSettings();
-			if (result.key === "project") sessionProject = projectName(sessionCwd);
+			if (result.key === "project") setSessionProject(projectName(sessionCwd), pi);
 			announce(ctx, `pi-cmem: ${result.key} set to ${JSON.stringify(result.value)} for this session.`, "info");
 		},
 	});
