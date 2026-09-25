@@ -151,7 +151,6 @@ let skipTools: string[] = [];
 let maxObservationChars = MAX_OBSERVATION_CHARS;
 let injectWhen: InjectWhen = "every-call";
 let maxInjectChars = 0;
-let injectedSessionId: string | null = null;
 
 function baseUrl(): string {
 	return `http://${host}:${port}`;
@@ -403,7 +402,6 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 		maxObservationChars = resolved.maxObservationChars.value;
 		injectWhen = resolved.injectWhen.value;
 		maxInjectChars = resolved.maxInjectChars.value;
-		injectedSessionId = null;
 		preflightAnnounced = false;
 		if (disabled) return;
 
@@ -466,14 +464,16 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 		}
 		if (!injectEnabled || injectWhen === "every-call" || !contentSessionId || !workerHealthy) return;
 
-		const activeSessionId =
-			typeof ctx.sessionManager?.getSessionId === "function" ? ctx.sessionManager.getSessionId() : contentSessionId;
-		if (injectWhen === "session-start" && injectedSessionId === activeSessionId) return;
+		if (
+			injectWhen === "session-start" &&
+			ctx.sessionManager.getBranch().some(
+				(entry) => entry.type === "custom_message" && entry.customType === "pi-cmem-context",
+			)
+		) return;
 		const digest = await workerGetText(`/api/context/inject?projects=${encodeURIComponent(sessionProject)}`);
 		if (!digest || !digest.trim()) return;
 		sessionCounters.digestsInjected += 1;
 		sessionCounters.lastDigestSize = digest.length;
-		if (injectWhen === "session-start") injectedSessionId = activeSessionId;
 		return {
 			message: {
 				customType: "pi-cmem-context",
