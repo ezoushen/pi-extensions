@@ -2,7 +2,7 @@
 
 Connect Pi to a shared claude-mem worker through its HTTP API. The package registers
 one `memory_recall` tool, optionally captures Pi observations, and can inject a memory
-digest before each turn.
+digest using a configurable timing mode.
 
 claude-mem is licensed under Apache-2.0. `pi-cmem` is an independent MIT-licensed HTTP
 client; it does not import claude-mem code.
@@ -51,6 +51,24 @@ Settings resolve from `pi-cmem.json` in the global Pi config directory, then fro
 trusted project's Pi config directory, then from the environment. Later sources win.
 Project settings are ignored when the project is untrusted.
 
+Context injection is off by default. Set `inject` to `true` to enable it. `injectWhen`
+controls when pi-cmem fetches and adds the digest:
+
+- `every-call` (default) adds it through Pi's `context` hook on each model call. A turn
+  that makes several model calls fetches the digest several times.
+- `each-prompt` adds one hidden custom message when each prompt starts. Pi persists that
+  message in the session; later requests include earlier prompt messages from the session
+  history as well.
+- `session-start` adds a hidden custom message before the first prompt in a Pi session.
+  It stays in that session's history; switching to another session allows its first prompt
+  to fetch a new digest.
+
+`maxInjectChars` limits the digest text to that many characters and adds a `[truncated]`
+marker when needed. The XML-style wrapper and marker are additional characters. Zero
+means unlimited. The digest content and its worker-side size come from claude-mem's shared
+`CLAUDE_MEM_CONTEXT_*` settings; `maxInjectChars` only truncates the response for pi-cmem
+and does not change those shared settings.
+
 `workerHost` and `workerPort` add one more layer below those: when neither an explicit
 setting nor the environment names them, they are discovered from claude-mem's own
 published settings (`~/.claude-mem/settings.json`, or
@@ -67,7 +85,9 @@ discovery.
 | `capture` | `true` | `PI_CMEM_CAPTURE=0` | Write prompts, tool observations, and summaries through the worker. |
 | `skipTools` | `[]` | `PI_CMEM_SKIP_TOOLS` | Comma-separated Pi tool names to omit from captured observations; `memory_recall` is always skipped. Invalid config values use `[]` with a warning. |
 | `maxObservationChars` | `1000` | `PI_CMEM_MAX_OBSERVATION_CHARS` | Maximum captured response length; must be an integer of at least 200. Invalid values use `1000` with a warning. |
-| `inject` | `false` | `PI_CMEM_INJECT=1` | Inject a worker-produced context digest before each turn. |
+| `inject` | `false` | `PI_CMEM_INJECT=1` | Enable worker-produced context digest injection. |
+| `injectWhen` | `"every-call"` | `PI_CMEM_INJECT_WHEN` | `every-call`, `each-prompt`, or `session-start`; controls when the digest is added. Invalid values use `every-call` with a warning. |
+| `maxInjectChars` | `0` | `PI_CMEM_MAX_INJECT_CHARS` | Maximum digest text length; zero is unlimited. Truncated text gets a marker. Invalid values use `0` with a warning. |
 | `workerHost` | `"127.0.0.1"` | `PI_CMEM_WORKER_HOST` | claude-mem worker host; discovered from claude-mem's own settings when not set explicitly. |
 | `workerPort` | `37777` | `PI_CMEM_WORKER_PORT` | claude-mem worker port; discovered from claude-mem's own settings when not set explicitly. |
 | `project` | `""` | `PI_CMEM_PROJECT` | Project override; empty uses the current working-directory basename. |
@@ -80,7 +100,9 @@ Example:
   "capture": true,
   "skipTools": ["read"],
   "maxObservationChars": 300,
-  "inject": false,
+  "inject": true,
+  "injectWhen": "each-prompt",
+  "maxInjectChars": 1200,
   "project": "shared-repository"
 }
 ```

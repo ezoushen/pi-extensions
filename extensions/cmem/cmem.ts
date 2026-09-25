@@ -33,7 +33,9 @@
  *   PI_CMEM_CAPTURE=0      recall only, no observation write-back (default: capture on)
  *   PI_CMEM_SKIP_TOOLS=<names> comma-separated pi tool names to omit from capture (default: none)
  *   PI_CMEM_MAX_OBSERVATION_CHARS=<chars> captured response limit (minimum: 200; default: 1000)
- *   PI_CMEM_INJECT=1       inject a context digest before each turn (default: off; costs tokens)
+ *   PI_CMEM_INJECT=1       enable context digest injection (default: off; costs tokens)
+ *   PI_CMEM_INJECT_WHEN=<mode> digest timing: every-call (default), each-prompt, or session-start
+ *   PI_CMEM_MAX_INJECT_CHARS=<chars> injected digest limit (default: 0, unlimited)
  *   PI_CMEM_PROJECT=<name> override the project name (default: cwd basename)
  *   PI_CMEM_WORKER_HOST=<host> worker host (default: 127.0.0.1)
  *   PI_CMEM_WORKER_PORT=<port> worker port (default: 37777)
@@ -68,6 +70,7 @@ const MAX_OBSERVATION_CHARS = 1_000;
 const MIN_OBSERVATION_CHARS = 200;
 const MAX_SEARCH_LIMIT = 100;
 const SESSION_COMPLETE_DELAY_MS = 3_000;
+type InjectWhen = "every-call" | "each-prompt" | "session-start";
 
 const CLAUDE_MEM_SETTINGS_DESCRIPTION = "claude-mem's own settings (CLAUDE_MEM_WORKER_";
 
@@ -133,6 +136,8 @@ const SETTING_DEFINITIONS = {
 		parseEnv: (value: string) => value.split(",").map((tool) => tool.trim()).filter(Boolean),
 	},
 	maxObservationChars: { default: MAX_OBSERVATION_CHARS, env: "PI_CMEM_MAX_OBSERVATION_CHARS", parseEnv: Number },
+	injectWhen: { default: "every-call" as InjectWhen, env: "PI_CMEM_INJECT_WHEN" },
+	maxInjectChars: { default: 0, env: "PI_CMEM_MAX_INJECT_CHARS", parseEnv: Number },
 };
 
 let disabled = false;
@@ -144,6 +149,9 @@ let configuredProject = "";
 let fallbackChromaScript = "";
 let skipTools: string[] = [];
 let maxObservationChars = MAX_OBSERVATION_CHARS;
+let injectWhen: InjectWhen = "every-call";
+let maxInjectChars = 0;
+let injectedSessionId: string | null = null;
 
 function baseUrl(): string {
 	return `http://${host}:${port}`;
@@ -318,6 +326,13 @@ function textOf(content: unknown): string {
 		.join("\n");
 }
 
+function formatInjectedDigest(digest: string): string {
+	const content = maxInjectChars > 0 && digest.length > maxInjectChars
+		? `${digest.slice(0, maxInjectChars)} [truncated]`
+		: digest;
+	return `<pi-cmem-context>\n${content}\n</pi-cmem-context>`;
+}
+
 function lastAssistantText(messages: unknown): string {
 	if (!Array.isArray(messages)) return "";
 	for (let i = messages.length - 1; i >= 0; i--) {
@@ -357,6 +372,24 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 			);
 			resolved.maxObservationChars = { value: MAX_OBSERVATION_CHARS, provenance: { source: "default" } };
 		}
+		if (!(["every-call", "each-prompt", "session-start"] as string[]).includes(String(resolved.injectWhen.value))) {
+			announce(
+				ctx,
+				"pi-cmem: invalid injectWhen setting; expected every-call, each-prompt, or session-start; using default every-call.",
+				"warning",
+				"pi-cmem-invalid-injectWhen",
+			);
+			resolved.injectWhen = { value: "every-call", provenance: { source: "default" } };
+		}
+		if (!Number.isInteger(resolved.maxInjectChars.value) || resolved.maxInjectChars.value < 0) {
+			announce(
+				ctx,
+				"pi-cmem: invalid maxInjectChars setting; expected a non-negative integer; using default 0 (unlimited).",
+				"warning",
+				"pi-cmem-invalid-maxInjectChars",
+			);
+			resolved.maxInjectChars = { value: 0, provenance: { source: "default" } };
+		}
 		effectiveSettings = resolved;
 		sessionCounters = newSessionCounters();
 		disabled = resolved.disabled.value;
@@ -368,6 +401,9 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 		fallbackChromaScript = resolved.fallbackPath.value;
 		skipTools = resolved.skipTools.value;
 		maxObservationChars = resolved.maxObservationChars.value;
+		injectWhen = resolved.injectWhen.value;
+		maxInjectChars = resolved.maxInjectChars.value;
+		injectedSessionId = null;
 		preflightAnnounced = false;
 		if (disabled) return;
 
@@ -418,20 +454,38 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 	// the privacy filter, the searchable prompts class, and worker-side injection. The Codex
 	// schema in transcript-watch.json maps every user message to session_init for the same
 	// reason.
-	pi.on("before_agent_start", async (event) => {
-		if (!captureEnabled || !contentSessionId) return;
-		const res = await workerPost("/api/sessions/init", {
-			contentSessionId,
-			project: sessionProject,
-			prompt: event.prompt || "pi session",
-			platformSource: PLATFORM_SOURCE,
-		});
-		workerHealthy = res !== null;
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (captureEnabled && contentSessionId) {
+			const res = await workerPost("/api/sessions/init", {
+				contentSessionId,
+				project: sessionProject,
+				prompt: event.prompt || "pi session",
+				platformSource: PLATFORM_SOURCE,
+			});
+			workerHealthy = res !== null;
+		}
+		if (!injectEnabled || injectWhen === "every-call" || !contentSessionId || !workerHealthy) return;
+
+		const activeSessionId =
+			typeof ctx.sessionManager?.getSessionId === "function" ? ctx.sessionManager.getSessionId() : contentSessionId;
+		if (injectWhen === "session-start" && injectedSessionId === activeSessionId) return;
+		const digest = await workerGetText(`/api/context/inject?projects=${encodeURIComponent(sessionProject)}`);
+		if (!digest || !digest.trim()) return;
+		sessionCounters.digestsInjected += 1;
+		sessionCounters.lastDigestSize = digest.length;
+		if (injectWhen === "session-start") injectedSessionId = activeSessionId;
+		return {
+			message: {
+				customType: "pi-cmem-context",
+				content: formatInjectedDigest(digest),
+				display: false,
+			},
+		};
 	});
 
 	// --- context: opt-in digest injection ---
 	pi.on("context", async (event) => {
-		if (!injectEnabled || !contentSessionId || !workerHealthy) return;
+		if (!injectEnabled || injectWhen !== "every-call" || !contentSessionId || !workerHealthy) return;
 		const digest = await workerGetText(`/api/context/inject?projects=${encodeURIComponent(sessionProject)}`);
 		if (!digest || !digest.trim()) return;
 		sessionCounters.digestsInjected += 1;
@@ -441,7 +495,7 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 				...event.messages,
 				{
 					role: "user" as const,
-					content: [{ type: "text" as const, text: `<pi-cmem-context>\n${digest}\n</pi-cmem-context>` }],
+					content: [{ type: "text" as const, text: formatInjectedDigest(digest) }],
 				},
 			],
 		};

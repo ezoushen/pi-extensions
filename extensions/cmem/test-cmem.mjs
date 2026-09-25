@@ -26,6 +26,8 @@ const CMEM_ENV_NAMES = [
 	"PI_CMEM_FALLBACK_PATH",
 	"PI_CMEM_SKIP_TOOLS",
 	"PI_CMEM_MAX_OBSERVATION_CHARS",
+	"PI_CMEM_INJECT_WHEN",
+	"PI_CMEM_MAX_INJECT_CHARS",
 	"CLAUDE_MEM_DATA_DIR",
 ];
 
@@ -231,6 +233,8 @@ test("memory-status reports effective setting provenance and session activity", 
 		"PI_CMEM_FALLBACK_PATH",
 		"PI_CMEM_SKIP_TOOLS",
 		"PI_CMEM_MAX_OBSERVATION_CHARS",
+		"PI_CMEM_INJECT_WHEN",
+		"PI_CMEM_MAX_INJECT_CHARS",
 		"CLAUDE_MEM_DATA_DIR",
 	];
 	const previousEnvironment = new Map(envNames.map((name) => [name, process.env[name]]));
@@ -298,8 +302,10 @@ test("memory-status reports effective setting provenance and session activity", 
 		});
 		runtime.handlers.get("tool_result")({ toolName: "memory_recall", input: {}, content: [{ type: "text", text: "remembered" }] });
 		await observationReceived;
-		const context = await runtime.handlers.get("context")({ messages: [] });
-		assert.equal(context.messages[0].content[0].text, "<pi-cmem-context>\ntest digest\n</pi-cmem-context>");
+		for (let call = 0; call < 3; call += 1) {
+			const context = await runtime.handlers.get("context")({ messages: [] });
+			assert.equal(context.messages[0].content[0].text, "<pi-cmem-context>\ntest digest\n</pi-cmem-context>");
+		}
 
 		await runtime.commands.get("memory-status").handler("", setup.context);
 		assert.equal(notifications.length, 1);
@@ -315,7 +321,9 @@ test("memory-status reports effective setting provenance and session activity", 
 			`project: \"forest\" (project: ${join(setup.context.cwd, CONFIG_DIR_NAME, "pi-cmem.json")})`,
 			`fallbackPath: ${JSON.stringify(fallbackPath)} (environment: PI_CMEM_FALLBACK_PATH)`,
 			"observations sent: 1; skipped: 1; truncated: 1",
-			"digests injected: 1; last digest size: 11 characters",
+			"injectWhen: \"every-call\" (default)",
+			"maxInjectChars: 0 (default)",
+			"digests injected: 3; last digest size: 11 characters",
 		];
 		for (const fragment of expected) assert.ok(message.includes(fragment), `missing status text: ${fragment}`);
 		assert.equal(observations.length, 1);
@@ -345,6 +353,8 @@ test("memory-status includes effective settings when the worker is unreachable",
 		"PI_CMEM_FALLBACK_PATH",
 		"PI_CMEM_SKIP_TOOLS",
 		"PI_CMEM_MAX_OBSERVATION_CHARS",
+		"PI_CMEM_INJECT_WHEN",
+		"PI_CMEM_MAX_INJECT_CHARS",
 		"CLAUDE_MEM_DATA_DIR",
 	];
 	const previousEnvironment = new Map(envNames.map((name) => [name, process.env[name]]));
@@ -353,6 +363,8 @@ test("memory-status includes effective settings when the worker is unreachable",
 
 	const notifications = [];
 	const setup = sessionFixture({ workerHost: "127.0.0.1", workerPort: 1, capture: false }, notifications);
+	process.env.PI_CMEM_INJECT_WHEN = "each-prompt";
+	process.env.PI_CMEM_MAX_INJECT_CHARS = "500";
 	const runtime = harness();
 	try {
 		cmemExtension(runtime.pi);
@@ -364,6 +376,8 @@ test("memory-status includes effective settings when the worker is unreachable",
 		assert.match(notifications[1].message, /worker: unreachable @ http:\/\/127\.0\.0\.1:1/);
 		assert.ok(notifications[1].message.includes(`capture: false (project: ${join(setup.context.cwd, CONFIG_DIR_NAME, "pi-cmem.json")})`));
 		assert.ok(notifications[1].message.includes("disabled: false (default)"));
+		assert.ok(notifications[1].message.includes('injectWhen: "each-prompt" (environment: PI_CMEM_INJECT_WHEN)'));
+		assert.ok(notifications[1].message.includes("maxInjectChars: 500 (environment: PI_CMEM_MAX_INJECT_CHARS)"));
 	} finally {
 		rmSync(setup.root, { recursive: true, force: true });
 		for (const [name, value] of previousEnvironment) {
@@ -439,13 +453,23 @@ test("capture skips configured tools and applies the configured observation limi
 	}
 });
 
-test("invalid capture settings fall back to defaults with one warning each", async () => {
+test("invalid capture and injection settings fall back to defaults with one warning each", async () => {
 	const restoreEnvironment = isolateCmemEnvironment({
 		CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings"),
 	});
 
 	const notifications = [];
-	const setup = sessionFixture({ workerHost: "127.0.0.1", workerPort: 1, skipTools: "read", maxObservationChars: 199 }, notifications);
+	const setup = sessionFixture(
+		{
+			workerHost: "127.0.0.1",
+			workerPort: 1,
+			skipTools: "read",
+			maxObservationChars: 199,
+			injectWhen: "per-message",
+			maxInjectChars: -1,
+		},
+		notifications,
+	);
 	const runtime = harness();
 	try {
 		cmemExtension(runtime.pi);
@@ -453,11 +477,15 @@ test("invalid capture settings fall back to defaults with one warning each", asy
 		await runtime.commands.get("memory-status").handler("", setup.context);
 
 		const invalidWarnings = notifications.filter((item) => item.level === "warning" && item.message.includes("invalid "));
-		assert.equal(invalidWarnings.length, 2);
+		assert.equal(invalidWarnings.length, 4);
 		assert.ok(invalidWarnings.some((item) => item.message.includes("invalid skipTools")));
 		assert.ok(invalidWarnings.some((item) => item.message.includes("invalid maxObservationChars")));
+		assert.ok(invalidWarnings.some((item) => item.message.includes("invalid injectWhen")));
+		assert.ok(invalidWarnings.some((item) => item.message.includes("invalid maxInjectChars")));
 		assert.ok(notifications.at(-1).message.includes("skipTools: [] (default)"));
 		assert.ok(notifications.at(-1).message.includes("maxObservationChars: 1000 (default)"));
+		assert.ok(notifications.at(-1).message.includes('injectWhen: "every-call" (default)'));
+		assert.ok(notifications.at(-1).message.includes("maxInjectChars: 0 (default)"));
 	} finally {
 		rmSync(setup.root, { recursive: true, force: true });
 		restoreEnvironment();
@@ -486,6 +514,160 @@ test("invalid observation limit from the environment uses its default with one w
 		assert.ok(notifications.at(-1).message.includes("maxObservationChars: 1000 (default)"));
 	} finally {
 		rmSync(setup.root, { recursive: true, force: true });
+		restoreEnvironment();
+	}
+});
+
+test("each-prompt injects one hidden custom message and skips the context hook", async () => {
+	const restoreEnvironment = isolateCmemEnvironment({
+		CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings"),
+	});
+	let digestCalls = 0;
+	const server = createServer((request, response) => {
+		if (request.url === "/api/health") {
+			response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: "test-worker" }));
+			return;
+		}
+		if (request.url?.startsWith("/api/context/inject")) {
+			digestCalls += 1;
+			response.writeHead(200, { "Content-Type": "text/plain" }).end(`digest-${digestCalls}`);
+			return;
+		}
+		response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+	});
+	let setup;
+	try {
+		await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		assert.ok(address && typeof address === "object");
+		setup = sessionFixture(
+			{ workerHost: "127.0.0.1", workerPort: address.port, capture: false, inject: true, injectWhen: "each-prompt" },
+			[],
+		);
+		const runtime = harness();
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+
+		const first = await runtime.handlers.get("before_agent_start")({ prompt: "first prompt" }, setup.context);
+		const second = await runtime.handlers.get("before_agent_start")({ prompt: "second prompt" }, setup.context);
+		assert.deepEqual(first, {
+			message: {
+				customType: "pi-cmem-context",
+				content: "<pi-cmem-context>\ndigest-1\n</pi-cmem-context>",
+				display: false,
+			},
+		});
+		assert.deepEqual(second, {
+			message: {
+				customType: "pi-cmem-context",
+				content: "<pi-cmem-context>\ndigest-2\n</pi-cmem-context>",
+				display: false,
+			},
+		});
+		for (let call = 0; call < 3; call += 1) {
+			assert.equal(await runtime.handlers.get("context")({ messages: [] }), undefined);
+		}
+		assert.equal(digestCalls, 2);
+	} finally {
+		if (server.listening) await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		if (setup) rmSync(setup.root, { recursive: true, force: true });
+		restoreEnvironment();
+	}
+});
+
+test("session-start injects once per active Pi session", async () => {
+	const restoreEnvironment = isolateCmemEnvironment({
+		CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings"),
+	});
+	let digestCalls = 0;
+	const server = createServer((request, response) => {
+		if (request.url === "/api/health") {
+			response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: "test-worker" }));
+			return;
+		}
+		if (request.url?.startsWith("/api/context/inject")) {
+			digestCalls += 1;
+			response.writeHead(200, { "Content-Type": "text/plain" }).end(`digest-${digestCalls}`);
+			return;
+		}
+		response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+	});
+	let setup;
+	try {
+		await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		assert.ok(address && typeof address === "object");
+		setup = sessionFixture(
+			{ workerHost: "127.0.0.1", workerPort: address.port, capture: false, inject: true, injectWhen: "session-start" },
+			[],
+		);
+		let activeSessionId = "session-a";
+		setup.context.sessionManager.getSessionId = () => activeSessionId;
+		const runtime = harness();
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+
+		const first = await runtime.handlers.get("before_agent_start")({ prompt: "first prompt" }, setup.context);
+		const second = await runtime.handlers.get("before_agent_start")({ prompt: "second prompt" }, setup.context);
+		assert.equal(first.message.content, "<pi-cmem-context>\ndigest-1\n</pi-cmem-context>");
+		assert.equal(second, undefined);
+
+		activeSessionId = "session-b";
+		const afterSwitch = await runtime.handlers.get("before_agent_start")({ prompt: "first prompt after switch" }, setup.context);
+		assert.equal(afterSwitch.message.content, "<pi-cmem-context>\ndigest-2\n</pi-cmem-context>");
+		for (let call = 0; call < 3; call += 1) {
+			assert.equal(await runtime.handlers.get("context")({ messages: [] }), undefined);
+		}
+		assert.equal(digestCalls, 2);
+	} finally {
+		if (server.listening) await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		if (setup) rmSync(setup.root, { recursive: true, force: true });
+		restoreEnvironment();
+	}
+});
+
+test("maxInjectChars truncates a digest and marks the injected text", async () => {
+	const restoreEnvironment = isolateCmemEnvironment({
+		CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings"),
+	});
+	const digest = "x".repeat(3_000);
+	const server = createServer((request, response) => {
+		if (request.url === "/api/health") {
+			response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: "test-worker" }));
+			return;
+		}
+		if (request.url?.startsWith("/api/context/inject")) {
+			response.writeHead(200, { "Content-Type": "text/plain" }).end(digest);
+			return;
+		}
+		response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+	});
+	let setup;
+	try {
+		await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		assert.ok(address && typeof address === "object");
+		setup = sessionFixture(
+			{
+				workerHost: "127.0.0.1",
+				workerPort: address.port,
+				capture: false,
+				inject: true,
+				injectWhen: "each-prompt",
+				maxInjectChars: 500,
+			},
+			[],
+		);
+		const runtime = harness();
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+		const result = await runtime.handlers.get("before_agent_start")({ prompt: "prompt" }, setup.context);
+
+		assert.equal(result.message.content, `<pi-cmem-context>\n${"x".repeat(500)} [truncated]\n</pi-cmem-context>`);
+		assert.equal(result.message.content.length, 500 + " [truncated]".length + "<pi-cmem-context>\n".length + "\n</pi-cmem-context>".length);
+	} finally {
+		if (server.listening) await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		if (setup) rmSync(setup.root, { recursive: true, force: true });
 		restoreEnvironment();
 	}
 });
