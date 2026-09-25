@@ -195,3 +195,150 @@ test("an explicit workerPort setting overrides discovery", async () => {
 		rmSync(setup.root, { recursive: true, force: true });
 	}
 });
+
+test("memory-status reports effective setting provenance and session activity", async () => {
+	const envNames = [
+		"PI_CMEM_DISABLED",
+		"PI_CMEM_CAPTURE",
+		"PI_CMEM_INJECT",
+		"PI_CMEM_WORKER_HOST",
+		"PI_CMEM_WORKER_PORT",
+		"PI_CMEM_PROJECT",
+		"PI_CMEM_FALLBACK_PATH",
+		"CLAUDE_MEM_DATA_DIR",
+	];
+	const previousEnvironment = new Map(envNames.map((name) => [name, process.env[name]]));
+	for (const name of envNames) delete process.env[name];
+
+	const agentDir = process.env.PI_CODING_AGENT_DIR;
+	assert.ok(agentDir);
+	const globalSettingsPath = join(agentDir, "pi-cmem.json");
+	const globalSettings = { capture: true };
+	mkdirSync(agentDir, { recursive: true });
+	writeFileSync(globalSettingsPath, JSON.stringify(globalSettings));
+
+	const root = mkdtempSync(join(tmpdir(), "pi-cmem-status-"));
+	const claudeMemDir = join(root, "claude-mem");
+	mkdirSync(claudeMemDir, { recursive: true });
+	const fallbackPath = join(root, "fallback.py");
+	const notifications = [];
+	const setup = sessionFixture({ inject: true, project: "forest" }, notifications);
+	const observations = [];
+	let resolveObservation;
+	const observationReceived = new Promise((resolve, reject) => {
+		const timeout = setTimeout(() => reject(new Error("timed out waiting for observation")), 2_000);
+		resolveObservation = () => {
+			clearTimeout(timeout);
+			resolve();
+		};
+	});
+	const server = createServer(async (request, response) => {
+		if (request.url === "/api/health") {
+			response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: "test-worker" }));
+			return;
+		}
+		if (request.url?.startsWith("/api/context/inject")) {
+			response.writeHead(200, { "Content-Type": "text/plain" }).end("test digest");
+			return;
+		}
+		if (request.url === "/api/sessions/observations") {
+			const chunks = [];
+			for await (const chunk of request) chunks.push(chunk);
+			observations.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+			response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+			resolveObservation();
+			return;
+		}
+		response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+	});
+	try {
+		await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		assert.ok(address && typeof address === "object");
+		writeFileSync(
+			join(claudeMemDir, "settings.json"),
+			JSON.stringify({ CLAUDE_MEM_WORKER_HOST: "127.0.0.1", CLAUDE_MEM_WORKER_PORT: String(address.port) }),
+		);
+		process.env.CLAUDE_MEM_DATA_DIR = claudeMemDir;
+		process.env.PI_CMEM_FALLBACK_PATH = fallbackPath;
+
+		const runtime = harness();
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+		runtime.handlers.get("tool_result")({
+			toolName: "read",
+			input: { path: "note.txt" },
+			content: [{ type: "text", text: "x".repeat(1_001) }],
+		});
+		runtime.handlers.get("tool_result")({ toolName: "memory_recall", input: {}, content: [{ type: "text", text: "remembered" }] });
+		await observationReceived;
+		const context = await runtime.handlers.get("context")({ messages: [] });
+		assert.equal(context.messages[0].content[0].text, "<pi-cmem-context>\ntest digest\n</pi-cmem-context>");
+
+		await runtime.commands.get("memory-status").handler("", setup.context);
+		assert.equal(notifications.length, 1);
+		assert.equal(notifications[0].level, "info");
+		const message = notifications[0].message;
+		const expected = [
+			"worker: reachable (version test-worker)",
+			"disabled: false (default)",
+			`capture: true (global: ${globalSettingsPath})`,
+			`inject: true (project: ${join(setup.context.cwd, CONFIG_DIR_NAME, "pi-cmem.json")})`,
+			"workerHost: \"127.0.0.1\" (discovered: claude-mem's own settings (CLAUDE_MEM_WORKER_HOST))",
+			`workerPort: ${address.port} (discovered: claude-mem's own settings (CLAUDE_MEM_WORKER_PORT))`,
+			`project: \"forest\" (project: ${join(setup.context.cwd, CONFIG_DIR_NAME, "pi-cmem.json")})`,
+			`fallbackPath: ${JSON.stringify(fallbackPath)} (environment: PI_CMEM_FALLBACK_PATH)`,
+			"observations sent: 1; skipped: 1; truncated: 1",
+			"digests injected: 1; last digest size: 11 characters",
+		];
+		for (const fragment of expected) assert.ok(message.includes(fragment), `missing status text: ${fragment}`);
+		assert.equal(observations.length, 1);
+		assert.equal(observations[0].tool_name, "read");
+		assert.equal(observations[0].tool_response.length, 1_000);
+		assert.ok(observations[0].tool_response.endsWith("[truncated]"));
+	} finally {
+		if (server.listening) await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		rmSync(setup.root, { recursive: true, force: true });
+		rmSync(root, { recursive: true, force: true });
+		rmSync(globalSettingsPath, { force: true });
+		for (const [name, value] of previousEnvironment) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	}
+});
+
+test("memory-status includes effective settings when the worker is unreachable", async () => {
+	const envNames = [
+		"PI_CMEM_DISABLED",
+		"PI_CMEM_CAPTURE",
+		"PI_CMEM_INJECT",
+		"PI_CMEM_WORKER_HOST",
+		"PI_CMEM_WORKER_PORT",
+		"PI_CMEM_PROJECT",
+		"PI_CMEM_FALLBACK_PATH",
+	];
+	const previousEnvironment = new Map(envNames.map((name) => [name, process.env[name]]));
+	for (const name of envNames) delete process.env[name];
+
+	const notifications = [];
+	const setup = sessionFixture({ workerHost: "127.0.0.1", workerPort: 1, capture: false }, notifications);
+	const runtime = harness();
+	try {
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+		await runtime.commands.get("memory-status").handler("", setup.context);
+
+		assert.equal(notifications.length, 2);
+		assert.equal(notifications[1].level, "info");
+		assert.match(notifications[1].message, /worker: unreachable @ http:\/\/127\.0\.0\.1:1/);
+		assert.ok(notifications[1].message.includes(`capture: false (project: ${join(setup.context.cwd, CONFIG_DIR_NAME, "pi-cmem.json")})`));
+		assert.ok(notifications[1].message.includes("disabled: false (default)"));
+	} finally {
+		rmSync(setup.root, { recursive: true, force: true });
+		for (const [name, value] of previousEnvironment) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	}
+});

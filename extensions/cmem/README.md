@@ -34,8 +34,15 @@ In pi's print (`-p`) and json modes there is no UI to notify, so warnings that w
 otherwise be silent there are written to stderr instead, once per distinct reason per
 process.
 
-`/memory-status` reports worker reachability, project scope, session identity, and the
-capture/injection state.
+`/memory-status` reports worker reachability and version, project scope, and session
+identity. It lists every effective setting's value and source: defaults, discovered
+claude-mem settings, global or trusted-project config paths, or environment variables.
+The same info block shows session counts for observations sent, skipped, and
+truncated, digests injected, and the character length of the last non-empty digest.
+Settings remain visible when the worker is unreachable. Skipped results are those
+without a tool name or from `memory_recall`; truncated observations use the existing
+1,000-character response limit. The sent count tracks Pi's observation submissions;
+it does not confirm that the worker persisted each one.
 
 ## Settings
 
