@@ -69,6 +69,33 @@ means unlimited. The digest content and its worker-side size come from claude-me
 `CLAUDE_MEM_CONTEXT_*` settings; `maxInjectChars` only truncates the response for pi-cmem
 and does not change those shared settings.
 
+### Session overrides
+
+Use `/memory-set <key> <value>` to change a settable value for the current Pi session.
+`/memory-set` lists the active overrides, and `/memory-set reset` clears them and restores
+the values resolved at session start. `/memory-status` labels overridden values as
+`session override`. These commands do not write configuration files; overrides clear when
+a session starts, resumes, or reloads.
+
+Settable keys are `capture` and `inject` (`on` or `off`), `injectWhen` (`every-call`,
+`each-prompt`, or `session-start`), `skipTools` (comma-separated Pi tool names),
+`maxObservationChars` (integer of at least 200), `maxInjectChars` (non-negative integer;
+zero is unlimited), and `project` (project name). For example:
+
+```text
+/memory-set capture off
+/memory-set inject on
+/memory-set injectWhen each-prompt
+/memory-set skipTools read,ls
+/memory-set maxObservationChars 300
+/memory-set maxInjectChars 1200
+/memory-set project other
+/memory-set
+/memory-set reset
+```
+
+`disabled`, worker connection, and fallback settings cannot be changed during a session.
+
 `workerHost` and `workerPort` add one more layer below those: when neither an explicit
 setting nor the environment names them, they are discovered from claude-mem's own
 published settings (`~/.claude-mem/settings.json`, or

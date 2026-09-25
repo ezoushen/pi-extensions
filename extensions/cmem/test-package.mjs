@@ -12,6 +12,7 @@ const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf
 
 test("manifest exposes pi-cmem as a public Pi package with its runtime imports as peers", () => {
 	assert.equal(manifest.name, "pi-cmem");
+	assert.equal(manifest.version, "0.3.0");
 	assert.ok(manifest.keywords.includes("pi-package"));
 	assert.equal(manifest.license, "MIT");
 	assert.equal(manifest.publishConfig.access, "public");
@@ -68,6 +69,7 @@ test("packed package contains only its files, installs, and loads with Pi", asyn
 			assert.ok(extensions[0].handlers.has(event), `missing handler for ${event}`);
 		}
 		assert.ok(extensions[0].tools.has("memory_recall"));
+		assert.ok(extensions[0].commands.has("memory-set"));
 	} finally {
 		rmSync(temp, { recursive: true, force: true });
 	}
