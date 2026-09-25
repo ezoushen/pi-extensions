@@ -575,7 +575,7 @@ test("each-prompt injects one hidden custom message and skips the context hook",
 	}
 });
 
-test("session-start injects once per active Pi session", async () => {
+test("session-start skips a resumed digest and injects in a new session", async () => {
 	const restoreEnvironment = isolateCmemEnvironment({
 		CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings"),
 	});
@@ -601,24 +601,43 @@ test("session-start injects once per active Pi session", async () => {
 			{ workerHost: "127.0.0.1", workerPort: address.port, capture: false, inject: true, injectWhen: "session-start" },
 			[],
 		);
-		let activeSessionId = "session-a";
+		let activeSessionId = "session-resumed";
+		const entriesBySession = {
+			"session-resumed": [
+				{
+					type: "custom_message",
+					customType: "pi-cmem-context",
+					content: "<pi-cmem-context>prior digest</pi-cmem-context>",
+					display: false,
+				},
+			],
+			"session-new": [],
+		};
 		setup.context.sessionManager.getSessionId = () => activeSessionId;
+		setup.context.sessionManager.getBranch = () => entriesBySession[activeSessionId];
 		const runtime = harness();
 		cmemExtension(runtime.pi);
 		await runtime.handlers.get("session_start")({}, setup.context);
 
-		const first = await runtime.handlers.get("before_agent_start")({ prompt: "first prompt" }, setup.context);
-		const second = await runtime.handlers.get("before_agent_start")({ prompt: "second prompt" }, setup.context);
-		assert.equal(first.message.content, "<pi-cmem-context>\ndigest-1\n</pi-cmem-context>");
-		assert.equal(second, undefined);
+		const resumed = await runtime.handlers.get("before_agent_start")({ prompt: "first prompt after resume" }, setup.context);
+		assert.equal(resumed, undefined);
+		assert.equal(digestCalls, 0);
 
-		activeSessionId = "session-b";
-		const afterSwitch = await runtime.handlers.get("before_agent_start")({ prompt: "first prompt after switch" }, setup.context);
-		assert.equal(afterSwitch.message.content, "<pi-cmem-context>\ndigest-2\n</pi-cmem-context>");
+		activeSessionId = "session-new";
+		await runtime.handlers.get("session_start")({}, setup.context);
+		const first = await runtime.handlers.get("before_agent_start")({ prompt: "first prompt" }, setup.context);
+		assert.equal(first.message.content, "<pi-cmem-context>\ndigest-1\n</pi-cmem-context>");
+		entriesBySession[activeSessionId].push({
+			type: "custom_message",
+			customType: "pi-cmem-context",
+			content: first.message.content,
+			display: false,
+		});
+		assert.equal(await runtime.handlers.get("before_agent_start")({ prompt: "second prompt" }, setup.context), undefined);
 		for (let call = 0; call < 3; call += 1) {
 			assert.equal(await runtime.handlers.get("context")({ messages: [] }), undefined);
 		}
-		assert.equal(digestCalls, 2);
+		assert.equal(digestCalls, 1);
 	} finally {
 		if (server.listening) await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 		if (setup) rmSync(setup.root, { recursive: true, force: true });

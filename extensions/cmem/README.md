@@ -60,8 +60,8 @@ controls when pi-cmem fetches and adds the digest:
   message in the session; later requests include earlier prompt messages from the session
   history as well.
 - `session-start` adds a hidden custom message before the first prompt in a Pi session.
-  It stays in that session's history; switching to another session allows its first prompt
-  to fetch a new digest.
+  A resumed or reloaded session whose history already contains that message does not fetch
+  another digest. A new session with no such message can fetch one on its first prompt.
 
 `maxInjectChars` limits the digest text to that many characters and adds a `[truncated]`
 marker when needed. The XML-style wrapper and marker are additional characters. Zero
