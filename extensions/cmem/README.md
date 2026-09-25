@@ -36,7 +36,8 @@ process.
 
 `/memory-status` reports worker reachability and version, project scope, and session
 identity. It lists every effective setting's value and source: defaults, discovered
-claude-mem settings, global or trusted-project config paths, or environment variables.
+claude-mem settings, global or trusted-project config paths, environment variables,
+or a session override.
 The same info block shows session counts for observations sent, skipped, and
 truncated, digests injected, and the character length of the last non-empty digest.
 Settings remain visible when the worker is unreachable. Skipped results are those
@@ -74,7 +75,11 @@ and does not change those shared settings.
 Use `/memory-set <key> <value>` to change a settable value for the current Pi session.
 `/memory-set` lists the active overrides, and `/memory-set reset` clears them and restores
 the values resolved at session start. `/memory-status` labels overridden values as
-`session override`. These commands do not write configuration files; overrides clear when
+`session override`. A project override that differs from the startup project uses a
+separate claude-mem session row with ID `<base session ID>:<project>` (normally
+`<Pi session id>:<project>`). Returning to the startup project, including with `reset`,
+restores the base session ID. Prompts, observations, and summaries then use that project's
+worker session row. These commands do not write configuration files; overrides clear when
 a session starts, resumes, or reloads.
 
 Settable keys are `capture` and `inject` (`on` or `off`), `injectWhen` (`every-call`,
