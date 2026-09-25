@@ -48,7 +48,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import { resolveSettings } from "../../shared/settings.ts";
+import { resolveSettings, type ResolvedSettings, type SettingProvenance } from "../../shared/settings.ts";
 import { announce } from "../../shared/announce.ts";
 
 const execFileAsync = promisify(execFile);
@@ -247,17 +247,55 @@ let sessionCwd = process.cwd();
 let workerHealthy = true;
 
 function observationPayload(toolName: string, input: unknown, responseText: string) {
+	const truncated = responseText.length > MAX_OBSERVATION_CHARS;
 	return {
-		contentSessionId,
-		tool_name: toolName,
-		tool_input: input ?? {},
-		tool_response:
-			responseText.length > MAX_OBSERVATION_CHARS
-				? `${responseText.slice(0, MAX_OBSERVATION_CHARS - 12)} [truncated]`
-				: responseText,
-		cwd: sessionCwd,
-		platformSource: PLATFORM_SOURCE,
+		truncated,
+		payload: {
+			contentSessionId,
+			tool_name: toolName,
+			tool_input: input ?? {},
+			tool_response: truncated ? `${responseText.slice(0, MAX_OBSERVATION_CHARS - 12)} [truncated]` : responseText,
+			cwd: sessionCwd,
+			platformSource: PLATFORM_SOURCE,
+		},
 	};
+}
+
+type SessionCounters = {
+	observationsSent: number;
+	observationsSkipped: number;
+	observationsTruncated: number;
+	digestsInjected: number;
+	lastDigestSize: number | null;
+};
+
+function newSessionCounters(): SessionCounters {
+	return { observationsSent: 0, observationsSkipped: 0, observationsTruncated: 0, digestsInjected: 0, lastDigestSize: null };
+}
+
+function provenanceLabel(provenance: SettingProvenance): string {
+	switch (provenance.source) {
+		case "default":
+			return "default";
+		case "discovered":
+			return `discovered: ${provenance.name}`;
+		case "global":
+			return `global: ${provenance.path}`;
+		case "project":
+			return `project: ${provenance.path}`;
+		case "environment":
+			return `environment: ${provenance.name}`;
+	}
+}
+
+function settingsLines(settings: ResolvedSettings<typeof SETTING_DEFINITIONS> | undefined): string {
+	return (Object.keys(SETTING_DEFINITIONS) as Array<keyof typeof SETTING_DEFINITIONS>)
+		.map((key) => {
+			const setting = settings?.[key];
+			if (!setting) return `  ${key}: unresolved`;
+			return `  ${key}: ${JSON.stringify(setting.value)} (${provenanceLabel(setting.provenance)})`;
+		})
+		.join("\n");
 }
 
 function textOf(content: unknown): string {
@@ -284,10 +322,14 @@ function lastAssistantText(messages: unknown): string {
 
 export default function piCmemExtension(pi: ExtensionAPI) {
 	let preflightAnnounced = false;
+	let effectiveSettings: ResolvedSettings<typeof SETTING_DEFINITIONS> | undefined;
+	let sessionCounters = newSessionCounters();
 
 	// --- session_start: resolve this project's settings and check the worker ---
 	pi.on("session_start", async (_event, ctx) => {
 		const resolved = resolveSettings("pi-cmem", SETTING_DEFINITIONS, ctx);
+		effectiveSettings = resolved;
+		sessionCounters = newSessionCounters();
 		disabled = resolved.disabled.value;
 		captureEnabled = !disabled && resolved.capture.value;
 		injectEnabled = !disabled && resolved.inject.value;
@@ -361,6 +403,8 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 		if (!injectEnabled || !contentSessionId || !workerHealthy) return;
 		const digest = await workerGetText(`/api/context/inject?projects=${encodeURIComponent(sessionProject)}`);
 		if (!digest || !digest.trim()) return;
+		sessionCounters.digestsInjected += 1;
+		sessionCounters.lastDigestSize = digest.length;
 		return {
 			messages: [
 				...event.messages,
@@ -376,8 +420,14 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 	pi.on("tool_result", (event) => {
 		if (!captureEnabled || !contentSessionId || !workerHealthy) return;
 		const toolName = event.toolName;
-		if (!toolName || toolName === "memory_recall") return;
-		workerPostFireAndForget("/api/sessions/observations", observationPayload(toolName, event.input, textOf(event.content)));
+		if (!toolName || toolName === "memory_recall") {
+			sessionCounters.observationsSkipped += 1;
+			return;
+		}
+		const observation = observationPayload(toolName, event.input, textOf(event.content));
+		sessionCounters.observationsSent += 1;
+		if (observation.truncated) sessionCounters.observationsTruncated += 1;
+		workerPostFireAndForget("/api/sessions/observations", observation.payload);
 	});
 
 	// --- agent_end: summarize then close, delayed so in-flight observations land ---
@@ -456,22 +506,29 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 
 	// --- health ---
 	pi.registerCommand("memory-status", {
-		description: "Show claude-mem bridge status (worker, project, capture/inject state)",
+		description: "Show effective pi-cmem settings and session activity",
 		handler: async (_args, ctx) => {
 			const health = await workerGetText("/api/health");
-			if (!health) {
-				announce(ctx, `pi-cmem: claude-mem worker unreachable at ${baseUrl()} (recall falls back to Chroma)`, "warning");
-				return;
-			}
 			let version = "?";
 			try {
-				version = String((JSON.parse(health) as { version?: string }).version ?? "?");
+				if (health) version = String((JSON.parse(health) as { version?: string }).version ?? "?");
 			} catch {
 				/* non-JSON health: still reachable */
 			}
 			announce(
 				ctx,
-				`pi-cmem: worker v${version} @ ${baseUrl()} | project: ${sessionProject} | session: ${contentSessionId ?? "none"} | capture: ${captureEnabled ? "on" : "off"} | inject: ${injectEnabled ? "on" : "off"}`,
+				[
+					"pi-cmem:",
+					health
+						? `worker: reachable (version ${version}) @ ${baseUrl()}`
+						: `worker: unreachable @ ${baseUrl()}`,
+					`project: ${sessionProject} | session: ${contentSessionId ?? "none"}`,
+					"settings:",
+					settingsLines(effectiveSettings),
+					"session counters:",
+					`  observations sent: ${sessionCounters.observationsSent}; skipped: ${sessionCounters.observationsSkipped}; truncated: ${sessionCounters.observationsTruncated}`,
+					`  digests injected: ${sessionCounters.digestsInjected}; last digest size: ${sessionCounters.lastDigestSize === null ? "none" : `${sessionCounters.lastDigestSize} characters`}`,
+				].join("\n"),
 				"info",
 			);
 		},
