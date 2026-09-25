@@ -31,7 +31,11 @@
  * Environment switches:
  *   PI_CMEM_DISABLED=1     disable bridge activity
  *   PI_CMEM_CAPTURE=0      recall only, no observation write-back (default: capture on)
- *   PI_CMEM_INJECT=1       inject a context digest before each turn (default: off; costs tokens)
+ *   PI_CMEM_SKIP_TOOLS=<names> comma-separated pi tool names to omit from capture (default: none)
+ *   PI_CMEM_MAX_OBSERVATION_CHARS=<chars> captured response limit (minimum: 200; default: 1000)
+ *   PI_CMEM_INJECT=1       enable context digest injection (default: off; costs tokens)
+ *   PI_CMEM_INJECT_WHEN=<mode> digest timing: every-call (default), each-prompt, or session-start
+ *   PI_CMEM_MAX_INJECT_CHARS=<chars> injected digest limit (default: 0, unlimited)
  *   PI_CMEM_PROJECT=<name> override the project name (default: cwd basename)
  *   PI_CMEM_WORKER_HOST=<host> worker host (default: 127.0.0.1)
  *   PI_CMEM_WORKER_PORT=<port> worker port (default: 37777)
@@ -48,7 +52,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import { resolveSettings } from "../../shared/settings.ts";
+import { resolveSettings, type ResolvedSettings, type SettingProvenance } from "../../shared/settings.ts";
 import { announce } from "../../shared/announce.ts";
 
 const execFileAsync = promisify(execFile);
@@ -63,8 +67,10 @@ const DEFAULT_WORKER_PORT = 37777;
 const WORKER_TIMEOUT_MS = 8_000;
 const CHROMA_TIMEOUT_MS = 30_000;
 const MAX_OBSERVATION_CHARS = 1_000;
+const MIN_OBSERVATION_CHARS = 200;
 const MAX_SEARCH_LIMIT = 100;
 const SESSION_COMPLETE_DELAY_MS = 3_000;
+type InjectWhen = "every-call" | "each-prompt" | "session-start";
 
 const CLAUDE_MEM_SETTINGS_DESCRIPTION = "claude-mem's own settings (CLAUDE_MEM_WORKER_";
 
@@ -124,6 +130,14 @@ const SETTING_DEFINITIONS = {
 	},
 	project: { default: "", env: "PI_CMEM_PROJECT" },
 	fallbackPath: { default: "", env: "PI_CMEM_FALLBACK_PATH" },
+	skipTools: {
+		default: [] as string[],
+		env: "PI_CMEM_SKIP_TOOLS",
+		parseEnv: (value: string) => value.split(",").map((tool) => tool.trim()).filter(Boolean),
+	},
+	maxObservationChars: { default: MAX_OBSERVATION_CHARS, env: "PI_CMEM_MAX_OBSERVATION_CHARS", parseEnv: Number },
+	injectWhen: { default: "every-call" as InjectWhen, env: "PI_CMEM_INJECT_WHEN" },
+	maxInjectChars: { default: 0, env: "PI_CMEM_MAX_INJECT_CHARS", parseEnv: Number },
 };
 
 let disabled = false;
@@ -133,6 +147,10 @@ let host = "127.0.0.1";
 let port = DEFAULT_WORKER_PORT;
 let configuredProject = "";
 let fallbackChromaScript = "";
+let skipTools: string[] = [];
+let maxObservationChars = MAX_OBSERVATION_CHARS;
+let injectWhen: InjectWhen = "every-call";
+let maxInjectChars = 0;
 
 function baseUrl(): string {
 	return `http://${host}:${port}`;
@@ -247,17 +265,55 @@ let sessionCwd = process.cwd();
 let workerHealthy = true;
 
 function observationPayload(toolName: string, input: unknown, responseText: string) {
+	const truncated = responseText.length > maxObservationChars;
 	return {
-		contentSessionId,
-		tool_name: toolName,
-		tool_input: input ?? {},
-		tool_response:
-			responseText.length > MAX_OBSERVATION_CHARS
-				? `${responseText.slice(0, MAX_OBSERVATION_CHARS - 12)} [truncated]`
-				: responseText,
-		cwd: sessionCwd,
-		platformSource: PLATFORM_SOURCE,
+		truncated,
+		payload: {
+			contentSessionId,
+			tool_name: toolName,
+			tool_input: input ?? {},
+			tool_response: truncated ? `${responseText.slice(0, maxObservationChars - 12)} [truncated]` : responseText,
+			cwd: sessionCwd,
+			platformSource: PLATFORM_SOURCE,
+		},
 	};
+}
+
+type SessionCounters = {
+	observationsSent: number;
+	observationsSkipped: number;
+	observationsTruncated: number;
+	digestsInjected: number;
+	lastDigestSize: number | null;
+};
+
+function newSessionCounters(): SessionCounters {
+	return { observationsSent: 0, observationsSkipped: 0, observationsTruncated: 0, digestsInjected: 0, lastDigestSize: null };
+}
+
+function provenanceLabel(provenance: SettingProvenance): string {
+	switch (provenance.source) {
+		case "default":
+			return "default";
+		case "discovered":
+			return `discovered: ${provenance.name}`;
+		case "global":
+			return `global: ${provenance.path}`;
+		case "project":
+			return `project: ${provenance.path}`;
+		case "environment":
+			return `environment: ${provenance.name}`;
+	}
+}
+
+function settingsLines(settings: ResolvedSettings<typeof SETTING_DEFINITIONS> | undefined): string {
+	return (Object.keys(SETTING_DEFINITIONS) as Array<keyof typeof SETTING_DEFINITIONS>)
+		.map((key) => {
+			const setting = settings?.[key];
+			if (!setting) return `  ${key}: unresolved`;
+			return `  ${key}: ${JSON.stringify(setting.value)} (${provenanceLabel(setting.provenance)})`;
+		})
+		.join("\n");
 }
 
 function textOf(content: unknown): string {
@@ -267,6 +323,13 @@ function textOf(content: unknown): string {
 		.filter((b): b is { type: string; text?: string } => !!b && typeof b === "object" && (b as { type?: string }).type === "text")
 		.map((b) => b.text ?? "")
 		.join("\n");
+}
+
+function formatInjectedDigest(digest: string): string {
+	const content = maxInjectChars > 0 && digest.length > maxInjectChars
+		? `${digest.slice(0, maxInjectChars)} [truncated]`
+		: digest;
+	return `<pi-cmem-context>\n${content}\n</pi-cmem-context>`;
 }
 
 function lastAssistantText(messages: unknown): string {
@@ -284,10 +347,50 @@ function lastAssistantText(messages: unknown): string {
 
 export default function piCmemExtension(pi: ExtensionAPI) {
 	let preflightAnnounced = false;
+	let effectiveSettings: ResolvedSettings<typeof SETTING_DEFINITIONS> | undefined;
+	let sessionCounters = newSessionCounters();
 
 	// --- session_start: resolve this project's settings and check the worker ---
 	pi.on("session_start", async (_event, ctx) => {
 		const resolved = resolveSettings("pi-cmem", SETTING_DEFINITIONS, ctx);
+		if (!Array.isArray(resolved.skipTools.value) || resolved.skipTools.value.some((tool) => typeof tool !== "string")) {
+			announce(
+				ctx,
+				"pi-cmem: invalid skipTools setting; expected an array of tool names; using default [].",
+				"warning",
+				"pi-cmem-invalid-skipTools",
+			);
+			resolved.skipTools = { value: [], provenance: { source: "default" } };
+		}
+		if (!Number.isInteger(resolved.maxObservationChars.value) || resolved.maxObservationChars.value < MIN_OBSERVATION_CHARS) {
+			announce(
+				ctx,
+				`pi-cmem: invalid maxObservationChars setting; expected an integer of at least ${MIN_OBSERVATION_CHARS}; using default ${MAX_OBSERVATION_CHARS}.`,
+				"warning",
+				"pi-cmem-invalid-maxObservationChars",
+			);
+			resolved.maxObservationChars = { value: MAX_OBSERVATION_CHARS, provenance: { source: "default" } };
+		}
+		if (!(["every-call", "each-prompt", "session-start"] as string[]).includes(String(resolved.injectWhen.value))) {
+			announce(
+				ctx,
+				"pi-cmem: invalid injectWhen setting; expected every-call, each-prompt, or session-start; using default every-call.",
+				"warning",
+				"pi-cmem-invalid-injectWhen",
+			);
+			resolved.injectWhen = { value: "every-call", provenance: { source: "default" } };
+		}
+		if (!Number.isInteger(resolved.maxInjectChars.value) || resolved.maxInjectChars.value < 0) {
+			announce(
+				ctx,
+				"pi-cmem: invalid maxInjectChars setting; expected a non-negative integer; using default 0 (unlimited).",
+				"warning",
+				"pi-cmem-invalid-maxInjectChars",
+			);
+			resolved.maxInjectChars = { value: 0, provenance: { source: "default" } };
+		}
+		effectiveSettings = resolved;
+		sessionCounters = newSessionCounters();
 		disabled = resolved.disabled.value;
 		captureEnabled = !disabled && resolved.capture.value;
 		injectEnabled = !disabled && resolved.inject.value;
@@ -295,6 +398,10 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 		port = resolved.workerPort.value;
 		configuredProject = resolved.project.value;
 		fallbackChromaScript = resolved.fallbackPath.value;
+		skipTools = resolved.skipTools.value;
+		maxObservationChars = resolved.maxObservationChars.value;
+		injectWhen = resolved.injectWhen.value;
+		maxInjectChars = resolved.maxInjectChars.value;
 		preflightAnnounced = false;
 		if (disabled) return;
 
@@ -345,28 +452,50 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 	// the privacy filter, the searchable prompts class, and worker-side injection. The Codex
 	// schema in transcript-watch.json maps every user message to session_init for the same
 	// reason.
-	pi.on("before_agent_start", async (event) => {
-		if (!captureEnabled || !contentSessionId) return;
-		const res = await workerPost("/api/sessions/init", {
-			contentSessionId,
-			project: sessionProject,
-			prompt: event.prompt || "pi session",
-			platformSource: PLATFORM_SOURCE,
-		});
-		workerHealthy = res !== null;
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (captureEnabled && contentSessionId) {
+			const res = await workerPost("/api/sessions/init", {
+				contentSessionId,
+				project: sessionProject,
+				prompt: event.prompt || "pi session",
+				platformSource: PLATFORM_SOURCE,
+			});
+			workerHealthy = res !== null;
+		}
+		if (!injectEnabled || injectWhen === "every-call" || !contentSessionId || !workerHealthy) return;
+
+		if (
+			injectWhen === "session-start" &&
+			ctx.sessionManager.getBranch().some(
+				(entry) => entry.type === "custom_message" && entry.customType === "pi-cmem-context",
+			)
+		) return;
+		const digest = await workerGetText(`/api/context/inject?projects=${encodeURIComponent(sessionProject)}`);
+		if (!digest || !digest.trim()) return;
+		sessionCounters.digestsInjected += 1;
+		sessionCounters.lastDigestSize = digest.length;
+		return {
+			message: {
+				customType: "pi-cmem-context",
+				content: formatInjectedDigest(digest),
+				display: false,
+			},
+		};
 	});
 
 	// --- context: opt-in digest injection ---
 	pi.on("context", async (event) => {
-		if (!injectEnabled || !contentSessionId || !workerHealthy) return;
+		if (!injectEnabled || injectWhen !== "every-call" || !contentSessionId || !workerHealthy) return;
 		const digest = await workerGetText(`/api/context/inject?projects=${encodeURIComponent(sessionProject)}`);
 		if (!digest || !digest.trim()) return;
+		sessionCounters.digestsInjected += 1;
+		sessionCounters.lastDigestSize = digest.length;
 		return {
 			messages: [
 				...event.messages,
 				{
 					role: "user" as const,
-					content: [{ type: "text" as const, text: `<pi-cmem-context>\n${digest}\n</pi-cmem-context>` }],
+					content: [{ type: "text" as const, text: formatInjectedDigest(digest) }],
 				},
 			],
 		};
@@ -376,8 +505,14 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 	pi.on("tool_result", (event) => {
 		if (!captureEnabled || !contentSessionId || !workerHealthy) return;
 		const toolName = event.toolName;
-		if (!toolName || toolName === "memory_recall") return;
-		workerPostFireAndForget("/api/sessions/observations", observationPayload(toolName, event.input, textOf(event.content)));
+		if (!toolName || toolName === "memory_recall" || skipTools.includes(toolName)) {
+			sessionCounters.observationsSkipped += 1;
+			return;
+		}
+		const observation = observationPayload(toolName, event.input, textOf(event.content));
+		sessionCounters.observationsSent += 1;
+		if (observation.truncated) sessionCounters.observationsTruncated += 1;
+		workerPostFireAndForget("/api/sessions/observations", observation.payload);
 	});
 
 	// --- agent_end: summarize then close, delayed so in-flight observations land ---
@@ -456,22 +591,29 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 
 	// --- health ---
 	pi.registerCommand("memory-status", {
-		description: "Show claude-mem bridge status (worker, project, capture/inject state)",
+		description: "Show effective pi-cmem settings and session activity",
 		handler: async (_args, ctx) => {
 			const health = await workerGetText("/api/health");
-			if (!health) {
-				announce(ctx, `pi-cmem: claude-mem worker unreachable at ${baseUrl()} (recall falls back to Chroma)`, "warning");
-				return;
-			}
 			let version = "?";
 			try {
-				version = String((JSON.parse(health) as { version?: string }).version ?? "?");
+				if (health) version = String((JSON.parse(health) as { version?: string }).version ?? "?");
 			} catch {
 				/* non-JSON health: still reachable */
 			}
 			announce(
 				ctx,
-				`pi-cmem: worker v${version} @ ${baseUrl()} | project: ${sessionProject} | session: ${contentSessionId ?? "none"} | capture: ${captureEnabled ? "on" : "off"} | inject: ${injectEnabled ? "on" : "off"}`,
+				[
+					"pi-cmem:",
+					health
+						? `worker: reachable (version ${version}) @ ${baseUrl()}`
+						: `worker: unreachable @ ${baseUrl()}`,
+					`project: ${sessionProject} | session: ${contentSessionId ?? "none"}`,
+					"settings:",
+					settingsLines(effectiveSettings),
+					"session counters:",
+					`  observations sent: ${sessionCounters.observationsSent}; skipped: ${sessionCounters.observationsSkipped}; truncated: ${sessionCounters.observationsTruncated}`,
+					`  digests injected: ${sessionCounters.digestsInjected}; last digest size: ${sessionCounters.lastDigestSize === null ? "none" : `${sessionCounters.lastDigestSize} characters`}`,
+				].join("\n"),
 				"info",
 			);
 		},
