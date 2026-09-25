@@ -36,7 +36,8 @@ process.
 
 `/memory-status` reports worker reachability and version, project scope, and session
 identity. It lists every effective setting's value and source: defaults, discovered
-claude-mem settings, global or trusted-project config paths, or environment variables.
+claude-mem settings, global or trusted-project config paths, environment variables,
+or a session override.
 The same info block shows session counts for observations sent, skipped, and
 truncated, digests injected, and the character length of the last non-empty digest.
 Settings remain visible when the worker is unreachable. Skipped results are those
@@ -68,6 +69,37 @@ marker when needed. The XML-style wrapper and marker are additional characters. 
 means unlimited. The digest content and its worker-side size come from claude-mem's shared
 `CLAUDE_MEM_CONTEXT_*` settings; `maxInjectChars` only truncates the response for pi-cmem
 and does not change those shared settings.
+
+### Session overrides
+
+Use `/memory-set <key> <value>` to change a settable value for the current Pi session.
+`/memory-set` lists the active overrides, and `/memory-set reset` clears them and restores
+the values resolved at session start. `/memory-status` labels overridden values as
+`session override`. A project override that differs from the startup project uses a
+separate claude-mem session row with ID `<base session ID>:<project>` (normally
+`<Pi session id>:<project>`). Returning to the startup project, including with `reset`,
+restores the base session ID. Prompts, observations, and summaries then use that project's
+worker session row. These commands do not write configuration files; overrides clear when
+a session starts, resumes, or reloads.
+
+Settable keys are `capture` and `inject` (`on` or `off`), `injectWhen` (`every-call`,
+`each-prompt`, or `session-start`), `skipTools` (comma-separated Pi tool names),
+`maxObservationChars` (integer of at least 200), `maxInjectChars` (non-negative integer;
+zero is unlimited), and `project` (project name). For example:
+
+```text
+/memory-set capture off
+/memory-set inject on
+/memory-set injectWhen each-prompt
+/memory-set skipTools read,ls
+/memory-set maxObservationChars 300
+/memory-set maxInjectChars 1200
+/memory-set project other
+/memory-set
+/memory-set reset
+```
+
+`disabled`, worker connection, and fallback settings cannot be changed during a session.
 
 `workerHost` and `workerPort` add one more layer below those: when neither an explicit
 setting nor the environment names them, they are discovered from claude-mem's own

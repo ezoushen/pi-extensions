@@ -140,6 +140,75 @@ const SETTING_DEFINITIONS = {
 	maxInjectChars: { default: 0, env: "PI_CMEM_MAX_INJECT_CHARS", parseEnv: Number },
 };
 
+const SETTABLE_SETTINGS = [
+	"capture",
+	"inject",
+	"injectWhen",
+	"skipTools",
+	"maxObservationChars",
+	"maxInjectChars",
+	"project",
+] as const;
+
+type SettableSetting = (typeof SETTABLE_SETTINGS)[number];
+type SessionOverrideValues = {
+	capture: boolean;
+	inject: boolean;
+	injectWhen: InjectWhen;
+	skipTools: string[];
+	maxObservationChars: number;
+	maxInjectChars: number;
+	project: string;
+};
+type EffectiveSettings = {
+	[Key in keyof typeof SETTING_DEFINITIONS]: {
+		value: (typeof SETTING_DEFINITIONS)[Key]["default"];
+		provenance: SettingProvenance | { source: "session override" };
+	};
+};
+
+function parseSessionOverride(setting: SettableSetting, value: string): { key: SettableSetting; value: SessionOverrideValues[SettableSetting] } | { error: string } {
+	switch (setting) {
+		case "capture":
+		case "inject":
+			if (value === "on") return { key: setting, value: true };
+			if (value === "off") return { key: setting, value: false };
+			return { error: `${setting} must be on or off.` };
+		case "injectWhen":
+			if (["every-call", "each-prompt", "session-start"].includes(value)) {
+				return { key: setting, value: value as InjectWhen };
+			}
+			return { error: "injectWhen must be every-call, each-prompt, or session-start." };
+		case "skipTools":
+			return { key: setting, value: value.split(",").map((tool) => tool.trim()).filter(Boolean) };
+		case "maxObservationChars": {
+			const chars = Number(value);
+			if (Number.isInteger(chars) && chars >= MIN_OBSERVATION_CHARS) return { key: setting, value: chars };
+			return { error: `maxObservationChars must be an integer of at least ${MIN_OBSERVATION_CHARS}.` };
+		}
+		case "maxInjectChars": {
+			const chars = Number(value);
+			if (Number.isInteger(chars) && chars >= 0) return { key: setting, value: chars };
+			return { error: "maxInjectChars must be a non-negative integer." };
+		}
+		case "project":
+			return { key: setting, value };
+	}
+}
+
+function withSessionOverrides(
+	settings: ResolvedSettings<typeof SETTING_DEFINITIONS>,
+	overrides: Partial<SessionOverrideValues>,
+): EffectiveSettings {
+	const effective = { ...settings } as EffectiveSettings;
+	const values = effective as unknown as Record<string, unknown>;
+	for (const key of SETTABLE_SETTINGS) {
+		const value = overrides[key];
+		if (value !== undefined) values[key] = { value, provenance: { source: "session override" } };
+	}
+	return effective;
+}
+
 let disabled = false;
 let captureEnabled = true;
 let injectEnabled = false;
@@ -260,6 +329,8 @@ async function searchViaChromaScript(query: string, limit: number, signal?: Abor
 // ---------------------------------------------------------------------------
 
 let contentSessionId: string | null = null;
+let baseContentSessionId: string | null = null;
+let sessionStartProject = "unknown";
 let sessionProject = "unknown";
 let sessionCwd = process.cwd();
 let workerHealthy = true;
@@ -279,6 +350,14 @@ function observationPayload(toolName: string, input: unknown, responseText: stri
 	};
 }
 
+function setSessionProject(project: string, pi: ExtensionAPI): void {
+	if (project === sessionProject) return;
+	sessionProject = project;
+	if (!baseContentSessionId) return;
+	contentSessionId = project === sessionStartProject ? baseContentSessionId : `${baseContentSessionId}:${project}`;
+	pi.appendEntry("pi-cmem-session", { contentSessionId, project: sessionProject, worker: baseUrl() });
+}
+
 type SessionCounters = {
 	observationsSent: number;
 	observationsSkipped: number;
@@ -291,10 +370,12 @@ function newSessionCounters(): SessionCounters {
 	return { observationsSent: 0, observationsSkipped: 0, observationsTruncated: 0, digestsInjected: 0, lastDigestSize: null };
 }
 
-function provenanceLabel(provenance: SettingProvenance): string {
+function provenanceLabel(provenance: SettingProvenance | { source: "session override" }): string {
 	switch (provenance.source) {
 		case "default":
 			return "default";
+		case "session override":
+			return "session override";
 		case "discovered":
 			return `discovered: ${provenance.name}`;
 		case "global":
@@ -306,7 +387,7 @@ function provenanceLabel(provenance: SettingProvenance): string {
 	}
 }
 
-function settingsLines(settings: ResolvedSettings<typeof SETTING_DEFINITIONS> | undefined): string {
+function settingsLines(settings: EffectiveSettings | undefined): string {
 	return (Object.keys(SETTING_DEFINITIONS) as Array<keyof typeof SETTING_DEFINITIONS>)
 		.map((key) => {
 			const setting = settings?.[key];
@@ -347,11 +428,29 @@ function lastAssistantText(messages: unknown): string {
 
 export default function piCmemExtension(pi: ExtensionAPI) {
 	let preflightAnnounced = false;
-	let effectiveSettings: ResolvedSettings<typeof SETTING_DEFINITIONS> | undefined;
+	let resolvedSettings: ResolvedSettings<typeof SETTING_DEFINITIONS> | undefined;
+	let sessionOverrides: Partial<SessionOverrideValues> = {};
 	let sessionCounters = newSessionCounters();
+	const currentSettings = () => resolvedSettings ? withSessionOverrides(resolvedSettings, sessionOverrides) : undefined;
+	const applyCurrentSettings = () => {
+		const settings = currentSettings();
+		if (!settings) return;
+		disabled = settings.disabled.value;
+		captureEnabled = !disabled && settings.capture.value;
+		injectEnabled = !disabled && settings.inject.value;
+		host = settings.workerHost.value;
+		port = settings.workerPort.value;
+		configuredProject = settings.project.value;
+		fallbackChromaScript = settings.fallbackPath.value;
+		skipTools = settings.skipTools.value;
+		maxObservationChars = settings.maxObservationChars.value;
+		injectWhen = settings.injectWhen.value;
+		maxInjectChars = settings.maxInjectChars.value;
+	};
 
 	// --- session_start: resolve this project's settings and check the worker ---
 	pi.on("session_start", async (_event, ctx) => {
+		sessionOverrides = {};
 		const resolved = resolveSettings("pi-cmem", SETTING_DEFINITIONS, ctx);
 		if (!Array.isArray(resolved.skipTools.value) || resolved.skipTools.value.some((tool) => typeof tool !== "string")) {
 			announce(
@@ -389,31 +488,22 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 			);
 			resolved.maxInjectChars = { value: 0, provenance: { source: "default" } };
 		}
-		effectiveSettings = resolved;
+		resolvedSettings = resolved;
 		sessionCounters = newSessionCounters();
-		disabled = resolved.disabled.value;
-		captureEnabled = !disabled && resolved.capture.value;
-		injectEnabled = !disabled && resolved.inject.value;
-		host = resolved.workerHost.value;
-		port = resolved.workerPort.value;
-		configuredProject = resolved.project.value;
-		fallbackChromaScript = resolved.fallbackPath.value;
-		skipTools = resolved.skipTools.value;
-		maxObservationChars = resolved.maxObservationChars.value;
-		injectWhen = resolved.injectWhen.value;
-		maxInjectChars = resolved.maxInjectChars.value;
+		applyCurrentSettings();
 		preflightAnnounced = false;
-		if (disabled) return;
-
 		sessionCwd = ctx.cwd;
 		sessionProject = projectName(ctx.cwd);
-		// Pi's own session id, so a resumed or continued pi session keeps writing to the SAME
-		// claude-mem row (promptNumber increments) instead of fragmenting into a fresh session
-		// per process. Pi session ids are UUIDv7, the same shape claude and codex already write.
-		// Falls back to a synthetic id if the session manager is unavailable.
+		if (disabled) return;
+
+		// Keep Pi's session id as the base: resumed sessions reuse its worker row, while a
+		// project override derives a separate row from it. Pi session ids are UUIDv7, the same
+		// shape claude and codex already write. Falls back to a synthetic id if unavailable.
 		const piSession =
 			typeof ctx.sessionManager?.getSessionId === "function" ? ctx.sessionManager.getSessionId() : null;
-		contentSessionId = piSession || `pi-${sessionProject}-${Date.now()}`;
+		sessionStartProject = sessionProject;
+		baseContentSessionId = piSession || `pi-${sessionProject}-${Date.now()}`;
+		contentSessionId = baseContentSessionId;
 		workerHealthy = await workerAlive();
 		if (!workerHealthy && !preflightAnnounced) {
 			const recallCost = fallbackChromaScript && existsSync(fallbackChromaScript)
@@ -536,6 +626,7 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", () => {
 		contentSessionId = null;
+		baseContentSessionId = null;
 	});
 
 	// --- the one and only recall tool (name unchanged from v1) ---
@@ -589,6 +680,67 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 		},
 	});
 
+	// --- session-only settings overrides ---
+	pi.registerCommand("memory-set", {
+		description: "Override pi-cmem settings for this session",
+		getArgumentCompletions: (argumentPrefix) => {
+			if (/\s/.test(argumentPrefix)) return null;
+			const prefix = argumentPrefix.trim();
+			return SETTABLE_SETTINGS
+				.filter((key) => key.startsWith(prefix))
+				.map((key) => ({ value: key, label: key }));
+		},
+		handler: async (args, ctx) => {
+			if (!resolvedSettings) {
+				announce(ctx, "pi-cmem: settings are unavailable until the session starts.", "warning");
+				return;
+			}
+
+			const input = args.trim();
+			if (!input) {
+				const lines = SETTABLE_SETTINGS
+					.filter((key) => sessionOverrides[key] !== undefined)
+					.map((key) => `  ${key}: ${JSON.stringify(sessionOverrides[key])}`);
+				announce(ctx, lines.length ? `pi-cmem session overrides:\n${lines.join("\n")}` : "pi-cmem: no session overrides.", "info");
+				return;
+			}
+
+			if (input === "reset") {
+				sessionOverrides = {};
+				applyCurrentSettings();
+				setSessionProject(projectName(sessionCwd), pi);
+				announce(ctx, "pi-cmem: session overrides reset.", "info");
+				return;
+			}
+
+			const separator = input.search(/\s/);
+			const key = separator < 0 ? input : input.slice(0, separator);
+			const value = separator < 0 ? "" : input.slice(separator).trim();
+			if (!SETTABLE_SETTINGS.includes(key as SettableSetting)) {
+				const reason = Object.hasOwn(SETTING_DEFINITIONS, key)
+					? `${key} cannot be changed during a session.`
+					: `unknown setting "${key}".`;
+				announce(ctx, `pi-cmem: ${reason}`, "warning");
+				return;
+			}
+			if (!value) {
+				announce(ctx, `pi-cmem: missing value for ${key}.`, "warning");
+				return;
+			}
+
+			const result = parseSessionOverride(key as SettableSetting, value);
+			if ("error" in result) {
+				announce(ctx, `pi-cmem: ${result.error}`, "warning");
+				return;
+			}
+
+			sessionOverrides = { ...sessionOverrides, [result.key]: result.value };
+			applyCurrentSettings();
+			if (result.key === "project") setSessionProject(projectName(sessionCwd), pi);
+			announce(ctx, `pi-cmem: ${result.key} set to ${JSON.stringify(result.value)} for this session.`, "info");
+		},
+	});
+
 	// --- health ---
 	pi.registerCommand("memory-status", {
 		description: "Show effective pi-cmem settings and session activity",
@@ -609,7 +761,7 @@ export default function piCmemExtension(pi: ExtensionAPI) {
 						: `worker: unreachable @ ${baseUrl()}`,
 					`project: ${sessionProject} | session: ${contentSessionId ?? "none"}`,
 					"settings:",
-					settingsLines(effectiveSettings),
+					settingsLines(currentSettings()),
 					"session counters:",
 					`  observations sent: ${sessionCounters.observationsSent}; skipped: ${sessionCounters.observationsSkipped}; truncated: ${sessionCounters.observationsTruncated}`,
 					`  digests injected: ${sessionCounters.digestsInjected}; last digest size: ${sessionCounters.lastDigestSize === null ? "none" : `${sessionCounters.lastDigestSize} characters`}`,

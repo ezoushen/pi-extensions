@@ -48,6 +48,7 @@ function harness() {
 	const tools = new Map();
 	const commands = new Map();
 	const notifications = [];
+	const entries = [];
 	return {
 		pi: {
 			on(name, handler) {
@@ -59,12 +60,15 @@ function harness() {
 			registerCommand(name, command) {
 				commands.set(name, command);
 			},
-			appendEntry() {},
+			appendEntry(type, data) {
+				entries.push({ type, data });
+			},
 		},
 		handlers,
 		tools,
 		commands,
 		notifications,
+		entries,
 	};
 }
 
@@ -81,6 +85,75 @@ function sessionFixture(settings, notifications = []) {
 			sessionManager: { getSessionId: () => "session-id" },
 			ui: { notify: (message, level) => notifications.push({ message, level }) },
 		},
+	};
+}
+
+async function fakeWorker(digest = "session digest") {
+	const observations = [];
+	const prompts = [];
+	const summaries = [];
+	const projectsBySession = new Map();
+	const observationWaiters = [];
+	let digestCalls = 0;
+	const server = createServer(async (request, response) => {
+		if (request.url === "/api/health") {
+			response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: "test-worker" }));
+			return;
+		}
+		if (request.url?.startsWith("/api/context/inject")) {
+			digestCalls += 1;
+			response.writeHead(200, { "Content-Type": "text/plain" }).end(digest);
+			return;
+		}
+		if (["/api/sessions/init", "/api/sessions/observations", "/api/sessions/summarize"].includes(request.url)) {
+			const chunks = [];
+			for await (const chunk of request) chunks.push(chunk);
+			const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+			if (request.url === "/api/sessions/init") {
+				if (!projectsBySession.get(body.contentSessionId)) {
+					projectsBySession.set(body.contentSessionId, body.project);
+				}
+				prompts.push({ ...body, sessionProject: projectsBySession.get(body.contentSessionId) });
+			} else {
+				if (request.url === "/api/sessions/observations") {
+					observations.push({ ...body, sessionProject: projectsBySession.get(body.contentSessionId) });
+					observationWaiters.shift()?.();
+				} else if (request.url === "/api/sessions/summarize") {
+					summaries.push({ ...body, sessionProject: projectsBySession.get(body.contentSessionId) });
+				}
+			}
+			response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+			return;
+		}
+		response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+	});
+	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address();
+	assert.ok(address && typeof address === "object");
+	return {
+		port: address.port,
+		observations,
+		prompts,
+		summaries,
+		projectsBySession,
+		get digestCalls() {
+			return digestCalls;
+		},
+		waitForObservation() {
+			return new Promise((resolve, reject) => {
+				const waiter = () => {
+					clearTimeout(timeout);
+					resolve();
+				};
+				const timeout = setTimeout(() => {
+					const index = observationWaiters.indexOf(waiter);
+					if (index >= 0) observationWaiters.splice(index, 1);
+					reject(new Error("timed out waiting for observation"));
+				}, 2_000);
+				observationWaiters.push(waiter);
+			});
+		},
+		close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
 	};
 }
 
@@ -339,6 +412,249 @@ test("memory-status reports effective setting provenance and session activity", 
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;
 		}
+	}
+});
+
+test("memory-set capture override resets to the resolved setting", async () => {
+	const restoreEnvironment = isolateCmemEnvironment({ CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings") });
+	const worker = await fakeWorker();
+	let setup;
+	try {
+		const notifications = [];
+		setup = sessionFixture({ workerHost: "127.0.0.1", workerPort: worker.port, capture: true }, notifications);
+		const runtime = harness();
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+
+		const set = runtime.commands.get("memory-set");
+		assert.ok(set, "memory-set command is registered");
+		await set.handler("capture off", setup.context);
+		runtime.handlers.get("tool_result")({ toolName: "read", input: {}, content: [{ type: "text", text: "skipped" }] });
+		await runtime.commands.get("memory-status").handler("", setup.context);
+		assert.ok(notifications.at(-1).message.includes("capture: false (session override)"));
+		assert.ok(notifications.at(-1).message.includes("observations sent: 0; skipped: 0; truncated: 0"));
+
+		const observationReceived = worker.waitForObservation();
+		await set.handler("reset", setup.context);
+		runtime.handlers.get("tool_result")({ toolName: "read", input: {}, content: [{ type: "text", text: "captured" }] });
+		await observationReceived;
+		await runtime.commands.get("memory-status").handler("", setup.context);
+
+		assert.equal(worker.observations.length, 1);
+		assert.equal(worker.observations[0].tool_response, "captured");
+		const projectSettingsPath = join(setup.context.cwd, CONFIG_DIR_NAME, "pi-cmem.json");
+		assert.ok(notifications.at(-1).message.includes(`capture: true (project: ${projectSettingsPath})`));
+	} finally {
+		await worker.close();
+		if (setup) rmSync(setup.root, { recursive: true, force: true });
+		restoreEnvironment();
+	}
+});
+
+test("memory-set injection overrides use before_agent_start once per prompt", async () => {
+	const restoreEnvironment = isolateCmemEnvironment({ CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings") });
+	const worker = await fakeWorker();
+	let setup;
+	try {
+		const notifications = [];
+		setup = sessionFixture({ workerHost: "127.0.0.1", workerPort: worker.port, capture: false, inject: false }, notifications);
+		const runtime = harness();
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+
+		const set = runtime.commands.get("memory-set");
+		assert.ok(set, "memory-set command is registered");
+		await set.handler("inject on", setup.context);
+		await set.handler("injectWhen each-prompt", setup.context);
+		const result = await runtime.handlers.get("before_agent_start")({ prompt: "next prompt" }, setup.context);
+		const contextResult = await runtime.handlers.get("context")({ messages: [] });
+		await runtime.commands.get("memory-status").handler("", setup.context);
+
+		assert.equal(result.message.content, "<pi-cmem-context>\nsession digest\n</pi-cmem-context>");
+		assert.equal(contextResult, undefined);
+		assert.equal(worker.digestCalls, 1);
+		assert.ok(notifications.at(-1).message.includes("inject: true (session override)"));
+		assert.ok(notifications.at(-1).message.includes('injectWhen: "each-prompt" (session override)'));
+	} finally {
+		await worker.close();
+		if (setup) rmSync(setup.root, { recursive: true, force: true });
+		restoreEnvironment();
+	}
+});
+
+test("memory-set project overrides use separate claude-mem sessions and reset to the startup session", async () => {
+	const restoreEnvironment = isolateCmemEnvironment({ CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings") });
+	const worker = await fakeWorker();
+	let setup;
+	try {
+		const notifications = [];
+		setup = sessionFixture({ workerHost: "127.0.0.1", workerPort: worker.port }, notifications);
+		const runtime = harness();
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+		await runtime.handlers.get("before_agent_start")({ prompt: "initial project" }, setup.context);
+
+		const set = runtime.commands.get("memory-set");
+		assert.ok(set, "memory-set command is registered");
+		await set.handler("skipTools read,ls", setup.context);
+		await set.handler("maxObservationChars 300", setup.context);
+		await set.handler("project other", setup.context);
+		await runtime.handlers.get("before_agent_start")({ prompt: "capture under other" }, setup.context);
+		runtime.handlers.get("tool_result")({ toolName: "read", input: {}, content: [{ type: "text", text: "skipped" }] });
+		const otherObservationReceived = worker.waitForObservation();
+		runtime.handlers.get("tool_result")({ toolName: "bash", input: {}, content: [{ type: "text", text: "x".repeat(2_000) }] });
+		await otherObservationReceived;
+		await runtime.commands.get("memory-status").handler("", setup.context);
+		assert.ok(notifications.at(-1).message.includes("project: other | session: session-id:other"));
+		assert.ok(notifications.at(-1).message.includes('skipTools: ["read","ls"] (session override)'));
+		assert.ok(notifications.at(-1).message.includes("maxObservationChars: 300 (session override)"));
+		assert.ok(notifications.at(-1).message.includes('project: "other" (session override)'));
+		assert.ok(notifications.at(-1).message.includes("observations sent: 1; skipped: 1; truncated: 1"));
+		await runtime.handlers.get("agent_end")({ messages: [] }, setup.context);
+
+		await set.handler("reset", setup.context);
+		await runtime.handlers.get("before_agent_start")({ prompt: "capture after reset" }, setup.context);
+		const resetObservationReceived = worker.waitForObservation();
+		runtime.handlers.get("tool_result")({ toolName: "bash", input: {}, content: [{ type: "text", text: "after reset" }] });
+		await resetObservationReceived;
+		await runtime.handlers.get("agent_end")({ messages: [] }, setup.context);
+		await runtime.commands.get("memory-status").handler("", setup.context);
+
+		assert.deepEqual(worker.prompts.map(({ contentSessionId, sessionProject }) => ({ contentSessionId, sessionProject })), [
+			{ contentSessionId: "session-id", sessionProject: "project" },
+			{ contentSessionId: "session-id:other", sessionProject: "other" },
+			{ contentSessionId: "session-id", sessionProject: "project" },
+		]);
+		assert.deepEqual(worker.projectsBySession, new Map([
+			["session-id", "project"],
+			["session-id:other", "other"],
+		]));
+		assert.deepEqual(worker.observations.map(({ contentSessionId, sessionProject }) => ({ contentSessionId, sessionProject })), [
+			{ contentSessionId: "session-id:other", sessionProject: "other" },
+			{ contentSessionId: "session-id", sessionProject: "project" },
+		]);
+		assert.deepEqual(worker.summaries.map(({ contentSessionId, sessionProject }) => ({ contentSessionId, sessionProject })), [
+			{ contentSessionId: "session-id:other", sessionProject: "other" },
+			{ contentSessionId: "session-id", sessionProject: "project" },
+		]);
+		assert.deepEqual(runtime.entries.map(({ type, data }) => ({ type, ...data })), [
+			{ type: "pi-cmem-session", contentSessionId: "session-id", project: "project", worker: `http://127.0.0.1:${worker.port}` },
+			{ type: "pi-cmem-session", contentSessionId: "session-id:other", project: "other", worker: `http://127.0.0.1:${worker.port}` },
+			{ type: "pi-cmem-session", contentSessionId: "session-id", project: "project", worker: `http://127.0.0.1:${worker.port}` },
+		]);
+		assert.equal(worker.observations.length, 2);
+		assert.equal(worker.observations[0].tool_name, "bash");
+		assert.equal(worker.observations[0].tool_response.length, 300);
+		assert.ok(worker.observations[0].tool_response.endsWith("[truncated]"));
+		assert.equal(worker.observations[1].tool_response, "after reset");
+		assert.ok(notifications.at(-1).message.includes("project: project | session: session-id"));
+		assert.ok(notifications.at(-1).message.includes("observations sent: 2; skipped: 1; truncated: 1"));
+	} finally {
+		await worker.close();
+		if (setup) rmSync(setup.root, { recursive: true, force: true });
+		restoreEnvironment();
+	}
+});
+
+test("memory-set rejects invalid and startup-only values without changing settings", async () => {
+	const restoreEnvironment = isolateCmemEnvironment({ CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings") });
+	const worker = await fakeWorker();
+	let setup;
+	try {
+		const notifications = [];
+		setup = sessionFixture(
+			{ workerHost: "127.0.0.1", workerPort: worker.port, capture: true, maxObservationChars: 400, injectWhen: "each-prompt" },
+			notifications,
+		);
+		const settingsPath = join(setup.context.cwd, CONFIG_DIR_NAME, "pi-cmem.json");
+		const settingsFileBefore = readFileSync(settingsPath, "utf8");
+		const runtime = harness();
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+
+		const set = runtime.commands.get("memory-set");
+		assert.ok(set, "memory-set command is registered");
+		assert.deepEqual(set.getArgumentCompletions(""), [
+			{ value: "capture", label: "capture" },
+			{ value: "inject", label: "inject" },
+			{ value: "injectWhen", label: "injectWhen" },
+			{ value: "skipTools", label: "skipTools" },
+			{ value: "maxObservationChars", label: "maxObservationChars" },
+			{ value: "maxInjectChars", label: "maxInjectChars" },
+			{ value: "project", label: "project" },
+		]);
+		assert.deepEqual(set.getArgumentCompletions("max"), [
+			{ value: "maxObservationChars", label: "maxObservationChars" },
+			{ value: "maxInjectChars", label: "maxInjectChars" },
+		]);
+		assert.equal(set.getArgumentCompletions("capture "), null);
+
+		await set.handler("capture off", setup.context);
+		const invalid = [
+			["unknownKey on", 'unknown setting "unknownKey"'],
+			["workerPort 1", "workerPort cannot be changed during a session"],
+			["maxObservationChars 50", "maxObservationChars must be an integer of at least 200"],
+			["injectWhen sometimes", "injectWhen must be every-call, each-prompt, or session-start"],
+			["capture", "missing value for capture"],
+		];
+		for (const [args, reason] of invalid) {
+			const count = notifications.length;
+			await set.handler(args, setup.context);
+			assert.equal(notifications.length, count + 1, `${args} reports exactly one reason`);
+			assert.equal(notifications.at(-1).level, "warning");
+			assert.ok(notifications.at(-1).message.includes(reason), `${args} explains ${reason}`);
+		}
+
+		await set.handler("", setup.context);
+		assert.ok(notifications.at(-1).message.includes("capture: false"));
+		await runtime.commands.get("memory-status").handler("", setup.context);
+		assert.ok(notifications.at(-1).message.includes("capture: false (session override)"));
+		assert.ok(notifications.at(-1).message.includes("maxObservationChars: 400 (project:"));
+		assert.ok(notifications.at(-1).message.includes('injectWhen: "each-prompt" (project:'));
+		assert.equal(readFileSync(settingsPath, "utf8"), settingsFileBefore);
+	} finally {
+		await worker.close();
+		if (setup) rmSync(setup.root, { recursive: true, force: true });
+		restoreEnvironment();
+	}
+});
+
+test("memory-set overrides clear when session_start resolves settings again", async () => {
+	const restoreEnvironment = isolateCmemEnvironment({ CLAUDE_MEM_DATA_DIR: join(tmpdir(), "pi-cmem-no-worker-settings") });
+	const worker = await fakeWorker();
+	let setup;
+	try {
+		const notifications = [];
+		setup = sessionFixture({ workerHost: "127.0.0.1", workerPort: worker.port, capture: false, project: "baseline" }, notifications);
+		const runtime = harness();
+		cmemExtension(runtime.pi);
+		await runtime.handlers.get("session_start")({}, setup.context);
+
+		const set = runtime.commands.get("memory-set");
+		assert.ok(set, "memory-set command is registered");
+		await set.handler("capture on", setup.context);
+		await set.handler("project other", setup.context);
+		await runtime.handlers.get("before_agent_start")({ prompt: "first project" }, setup.context);
+		const observationReceived = worker.waitForObservation();
+		runtime.handlers.get("tool_result")({ toolName: "bash", input: {}, content: [{ type: "text", text: "captured once" }] });
+		await observationReceived;
+		assert.equal(worker.observations.length, 1);
+		assert.equal(worker.observations[0].sessionProject, "other");
+
+		await runtime.handlers.get("session_start")({}, setup.context);
+		runtime.handlers.get("tool_result")({ toolName: "bash", input: {}, content: [{ type: "text", text: "not captured" }] });
+		await runtime.commands.get("memory-status").handler("", setup.context);
+
+		const projectSettingsPath = join(setup.context.cwd, CONFIG_DIR_NAME, "pi-cmem.json");
+		assert.ok(notifications.at(-1).message.includes("project: baseline | session:"));
+		assert.ok(notifications.at(-1).message.includes(`capture: false (project: ${projectSettingsPath})`));
+		assert.ok(notifications.at(-1).message.includes(`project: "baseline" (project: ${projectSettingsPath})`));
+		assert.ok(notifications.at(-1).message.includes("observations sent: 0; skipped: 0; truncated: 0"));
+		assert.equal(worker.observations.length, 1);
+	} finally {
+		await worker.close();
+		if (setup) rmSync(setup.root, { recursive: true, force: true });
+		restoreEnvironment();
 	}
 });
 
