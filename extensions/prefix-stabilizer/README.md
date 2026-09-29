@@ -4,9 +4,10 @@ Keep Pi's provider request prefix byte-stable across turns, reloads, and resumes
 a server-side prefix cache can reuse it.
 
 The extension normalizes install paths inside the system prompt, sorts tool-schema
-lists by name, then fingerprints the normalized system text. It warns when that text
-changes during a session because one early changed token invalidates every cached
-block after it.
+lists by name, then fingerprints the normalized leading system text. It warns when that
+text changes during a session because one early changed token invalidates every cached
+block after it. System messages later in the conversation, which Pi sends to models with
+`supportsMidConvoSystemMessages`, extend the cached prefix and do not warn.
 
 ## External contract
 
