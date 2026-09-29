@@ -235,7 +235,12 @@ function walk(
 	return { v, n: 0 };
 }
 
-/** Concatenated system-message content of a payload, for fingerprinting. */
+/**
+ * Concatenated leading system-message content of a payload, for fingerprinting.
+ * A system message later in the conversation extends the cached prefix rather
+ * than invalidating it, so only the system messages before the first other
+ * message count.
+ */
 function systemText(payload: Record<string, unknown>): string {
 	const parts: string[] = [];
 	const push = (c: unknown) => {
@@ -246,8 +251,10 @@ function systemText(payload: Record<string, unknown>): string {
 	for (const f of ["system", "instructions"]) if (typeof payload[f] === "string") parts.push(payload[f] as string);
 	const msgs = payload.messages;
 	if (Array.isArray(msgs))
-		for (const m of msgs)
-			if (m && typeof m === "object" && (m as any).role === "system") push((m as any).content);
+		for (const m of msgs) {
+			if (!m || typeof m !== "object" || (m as any).role !== "system") break;
+			push((m as any).content);
+		}
 	// Normalise line endings and trailing whitespace: semantically identical
 	// prompts should share a fingerprint (and a cache).
 	return parts.join("\n").replace(/\r\n/g, "\n").replace(/[ \t]+$/gm, "");

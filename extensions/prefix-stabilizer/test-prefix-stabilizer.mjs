@@ -286,6 +286,32 @@ test("a genuine normalized system change warns once until the prompt changes aga
 	assert.match(result.notifications[0], /system prompt changed mid-session/);
 });
 
+test("a system message sent later in the conversation keeps the cached prefix and does not warn", () => {
+	const head = { role: "system", content: "system prompt A" };
+	const result = runSequence([
+		{ messages: [head, { role: "user", content: "run the build" }] },
+		{
+			messages: [
+				head,
+				{ role: "user", content: "run the build" },
+				{ role: "assistant", content: "started" },
+				{ role: "system", content: "<section>shell policy removed</section>" },
+				{ role: "user", content: "task finished" },
+			],
+		},
+	]);
+	assert.deepEqual(result.notifications, []);
+});
+
+test("a changed leading system message still warns", () => {
+	const result = runSequence([
+		{ messages: [{ role: "system", content: "system prompt A" }, { role: "user", content: "hi" }] },
+		{ messages: [{ role: "system", content: "system prompt B" }, { role: "user", content: "hi" }] },
+	]);
+	assert.equal(result.notifications.length, 1);
+	assert.match(result.notifications[0], /system prompt changed mid-session/);
+});
+
 test("packed package installs and registers through pi's loader", async () => {
 	const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 	assert.equal(manifest.name, "pi-prefix-stabilizer");
