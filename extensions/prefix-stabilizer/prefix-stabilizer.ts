@@ -39,11 +39,15 @@
  *      changing cwd) stop being silent ~130s taxes. Each drift is reported,
  *      because each one costs a full re-prefill; a repeated prompt does not
  *      re-warn because its fingerprint is unchanged.
+ *   4. Reordered forced prompts. A prompt an extension returns from
+ *      before_agent_start is dropped when it only moves pi's own sections, so
+ *      runs started by extension messages share the typed-prompt prefix.
  *
  * LOAD ORDER: list this BEFORE `pi-compaction-cache` in `packages`, so
  * that extension captures the already-normalised payload as its `live` prefix.
  * It only observes in before_provider_request (returns undefined), so the two
- * do not race over the handler result.
+ * do not race over the handler result. List it AFTER extensions whose
+ * reordered prompt it should drop: before_agent_start runs in load order.
  *
  * PI_PREFIX_STABILIZER=0           disable
  * PI_PREFIX_STABILIZER_LOG=<path>  one JSON line per symlink change / drift event
@@ -260,10 +264,68 @@ function systemText(payload: Record<string, unknown>): string {
 	return parts.join("\n").replace(/\r\n/g, "\n").replace(/[ \t]+$/gm, "");
 }
 
+/** Filler pi appends to its tool list; a relocated copy may leave it out. */
+const TOOLS_FILLER = "In addition to the tools above, you may have access to other custom tools depending on the project.";
+
+/**
+ * A prompt's sections, order-independent, for comparing content: each `<name>`
+ * block through its `</name>`, and each paragraph of untagged text. Lines keep
+ * their order inside a section, so only whole sections may move.
+ */
+function promptSections(text: string): string[] {
+	const sections: string[] = [];
+	let current: string[] = [];
+	let closing: string | null = null;
+	const flush = () => {
+		if (current.length) sections.push(current.join("\n"));
+		current = [];
+	};
+	for (const raw of text.split("\n")) {
+		const line = raw.trimEnd();
+		if (closing) {
+			if (line.trim() && line !== TOOLS_FILLER) current.push(line);
+			if (line === closing) {
+				closing = null;
+				flush();
+			}
+			continue;
+		}
+		const open = /^<([a-z][a-z0-9_-]*)>$/.exec(line);
+		if (open) {
+			flush();
+			closing = `</${open[1]}>`;
+			current.push(line);
+		} else if (!line.trim()) flush();
+		else if (line !== TOOLS_FILLER) current.push(line);
+	}
+	flush();
+	return sections.sort();
+}
+
 export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 	if (DISABLED) return;
 	let announced = false;
 	let fingerprint: string | null = null;
+
+	// Pi 0.99 applies a prompt returned from before_agent_start to that run only,
+	// and runs started by extension messages never see it, so the leading prompt
+	// alternates and the prefix cache is lost on each switch. A forced prompt
+	// that only moves pi's own sections changes nothing the model is told; drop
+	// it. Anything else, even lines reordered inside a section, stays forced.
+	pi.on("before_agent_start", (event: any) => {
+		const options = event?.systemPromptOptions;
+		const forced = options?.forceSystemPrompt;
+		if (typeof forced !== "string") return;
+		delete options.forceSystemPrompt;
+		const structured = event.systemPrompt;
+		const a = promptSections(forced);
+		const b = promptSections(structured);
+		if (a.length === b.length && a.every((section, i) => section === b[i])) {
+			log({ dropped_reordered_prompt: true });
+			return;
+		}
+		options.forceSystemPrompt = forced;
+	});
 
 	pi.on("before_provider_request", (event: any, ctx?: any) => {
 		const payload: Record<string, unknown> | undefined = event?.payload;

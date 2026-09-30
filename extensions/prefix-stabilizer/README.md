@@ -9,6 +9,14 @@ text changes during a session because one early changed token invalidates every 
 block after it. System messages later in the conversation, which Pi sends to models with
 `supportsMidConvoSystemMessages`, extend the cached prefix and do not warn.
 
+On Pi 0.99, a prompt that an extension returns from `before_agent_start` replaces the
+prompt for typed-prompt runs only. Runs started by extension messages, such as
+background-task notifications, use Pi's own prompt, so the leading prompt switches and the
+cache is lost twice per such run. When the returned prompt holds exactly Pi's own sections
+in a different order (pi-permission-system moves the tool list to the end, for example),
+the stabilizer drops it. A returned prompt that adds, removes or reorders any line within a
+section is left in place.
+
 ## External contract
 
 The provider must offer content-addressed prefix caching whose cache key depends on
@@ -48,6 +56,10 @@ Load `pi-prefix-stabilizer` before `pi-compaction-cache`.
 
 The stabilizer must normalize the ordinary provider payload before the compaction
 extension captures it as the live cache prefix.
+
+List it after any extension whose reordered prompt it should drop. Pi runs
+`before_agent_start` handlers in load order, so the stabilizer only sees prompts returned
+by extensions loaded before it.
 
 ```sh
 pi install npm:pi-prefix-stabilizer

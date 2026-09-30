@@ -312,6 +312,69 @@ test("a changed leading system message still warns", () => {
 	assert.match(result.notifications[0], /system prompt changed mid-session/);
 });
 
+const agentStartFixture = join(repoRoot, "test", "fixtures", "run-prefix-stabilizer-agent-start.mjs");
+
+function runAgentStart(sections, forced) {
+	const home = mkdtempSync(join(tmpdir(), "pi-prefix-stabilizer-agent-start-"));
+	const environment = {
+		...process.env,
+		HOME: home,
+		PREFIX_STABILIZER_TEST_AGENT_START: JSON.stringify({ sections, forced }),
+	};
+	delete environment.PI_CODING_AGENT_DIR;
+	try {
+		return JSON.parse(
+			execFileSync(process.execPath, ["--experimental-strip-types", agentStartFixture, source], {
+				cwd: home,
+				env: environment,
+				encoding: "utf8",
+			}),
+		).forced;
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+}
+
+const structuredSections = {
+	preamble: "You are an expert coding assistant.",
+	tools: "<tools>\n- read: Read file contents\n- bash: Execute bash commands\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.\n</tools>",
+	rules: "<rules>\n- Use read to examine files\n</rules>",
+	cwd: "<cwd>\n/work\n</cwd>",
+};
+
+test("a forced prompt that only moves pi's own sections is dropped so every run keeps one prefix", () => {
+	// The shape pi-permission-system 35-36 returns: tools and rules moved after
+	// cwd, and the "In addition to the tools above" filler left out.
+	const relocated = [
+		structuredSections.preamble,
+		structuredSections.cwd,
+		"<tools>\n- read: Read file contents\n- bash: Execute bash commands\n</tools>",
+		structuredSections.rules,
+	].join("\n\n");
+	assert.equal(runAgentStart(structuredSections, relocated), null);
+});
+
+test("a forced prompt that adds an instruction stays forced", () => {
+	const extended = `${Object.values(structuredSections).join("\n\n")}\n\nAlways answer in French.`;
+	assert.equal(runAgentStart(structuredSections, extended), extended);
+});
+
+test("a forced prompt that reorders lines inside a section stays forced", () => {
+	const sections = { ...structuredSections, rules: "<rules>\n- Prefer rg\n- Never use grep\n</rules>" };
+	const swapped = Object.values({ ...sections, rules: "<rules>\n- Never use grep\n- Prefer rg\n</rules>" }).join(
+		"\n\n",
+	);
+	assert.equal(runAgentStart(sections, swapped), swapped);
+});
+
+test("a forced prompt that withholds a tool stays forced", () => {
+	const narrowed = Object.values({
+		...structuredSections,
+		tools: "<tools>\n- read: Read file contents\n</tools>",
+	}).join("\n\n");
+	assert.equal(runAgentStart(structuredSections, narrowed), narrowed);
+});
+
 test("packed package installs and registers through pi's loader", async () => {
 	const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 	assert.equal(manifest.name, "pi-prefix-stabilizer");
