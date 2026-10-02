@@ -60,8 +60,9 @@ regular terminal scrollback can leave the highlighted line above the viewport.
 Fullscreen Pi exposes scrolling by line, but its extension UI does not expose the
 selected transcript row's position; the cursor therefore cannot scroll to it.
 
-An **exchange** is one uninterrupted work span from a submitted prompt until Pi has
-nothing left to do automatically. A **turn** is one model response plus the tools it
+An **exchange** is one uninterrupted work span from a submitted prompt, or from a run
+an extension message starts (a background-task notification, for example), until Pi has
+nothing left to do automatically. Both kinds get the same card. A **turn** is one model response plus the tools it
 invokes, so an exchange can contain several turns. The status line shows the current
 or most recent exchange. Exchange and session cards are summary-only and show one
 line when their content fits; at narrower widths Pi wraps the text without

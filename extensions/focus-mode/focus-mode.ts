@@ -41,7 +41,7 @@
  *   entries, which do not participate in LLM context.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { AssistantMessageComponent, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { announce } from "../../shared/announce.ts";
 import { resolveSettings, type SettingsRuntime } from "../../shared/settings.ts";
@@ -561,18 +561,11 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		}
 	});
 
-	pi.on("before_agent_start", (_event, ctx) => {
-		if (running) {
-			// A follow-up arrived mid-run; pi will not settle until it drains, so this
-			// continues the current span instead of restarting it.
-			promptCount++;
-			return;
-		}
-
+	function beginExchange(ctx: ExtensionContext, prompts: number): void {
 		running = true;
 		toolFold.beginExchange(exchangeIndex + 1);
 		startedAt = Date.now();
-		promptCount = 1;
+		promptCount = prompts;
 		exchangeIndex++;
 		turns = [];
 		totals = emptyTotals();
@@ -596,6 +589,22 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 				stopLiveTimer();
 			}
 		}, TICK_MS);
+	}
+
+	pi.on("before_agent_start", (_event, ctx) => {
+		if (running) {
+			// A follow-up arrived mid-run; pi will not settle until it drains, so this
+			// continues the current span instead of restarting it.
+			promptCount++;
+			return;
+		}
+		beginExchange(ctx, 1);
+	});
+
+	// A run started by an extension message (a background-task notification, for example)
+	// skips before_agent_start, so it begins here; its response gets a card like any other.
+	pi.on("agent_start", (_event, ctx) => {
+		if (!running) beginExchange(ctx, 0);
 	});
 
 	pi.on("turn_start", (event, _ctx) => {
