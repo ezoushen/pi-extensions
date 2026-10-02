@@ -450,7 +450,7 @@ test("a flip and its re-add on the next typed prompt leave nothing for the model
 	const history = [leading, ...typedThenNotified, flip(7), assistant("checked", 8)];
 	const { contexts } = runSteps([
 		...notificationRun(),
-		{ on: "before_agent_start" },
+		{ on: "before_agent_start", prompt: "did codex finish?" },
 		{ on: "agent_start" },
 		{ on: "context", messages: [...history, patch({ automattic_harness: harness, pi_background_shell_policy: shellPolicy }, 9), user("did codex finish?", 10)] },
 		{ on: "agent_end" },
@@ -460,9 +460,21 @@ test("a flip and its re-add on the next typed prompt leave nothing for the model
 	assert.deepEqual(sent.filter((message) => message.role !== "system"), [...typedThenNotified, assistant("checked", 8), user("did codex finish?", 10)]);
 });
 
+test("the dropped removal is recorded as soon as it is dropped", () => {
+	// A /tree or fork to a message later in the same run must already find the record.
+	const { contexts } = runSteps(notificationRun());
+	assert.equal(contexts[1].entriesSoFar, 1);
+});
+
+test("a typed prompt that never started its run does not mark the next notification run as typed", () => {
+	// before_agent_start ran, then the prompt failed (or lost a race with the notification).
+	const { contexts } = runSteps([{ on: "before_agent_start", prompt: "start the review" }, ...notificationRun()]);
+	assert.deepEqual(sectionsAfter(contexts[1].messages), leading.sections);
+});
+
 test("a removal during a typed run reaches the model", () => {
 	const { contexts } = runSteps([
-		{ on: "before_agent_start" },
+		{ on: "before_agent_start", prompt: "stop the harness" },
 		{ on: "agent_start" },
 		{ on: "context", messages: [leading, user("stop the harness", 2)] },
 		{ on: "context", messages: [leading, user("stop the harness", 2), assistant("ok", 3), toolResult(4), patch({ automattic_harness: null }, 5)] },

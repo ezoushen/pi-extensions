@@ -31,8 +31,10 @@ request the stabilizer leaves out of the request copy:
 - patch entries that set a section to the text it already has, and the patches this leaves
   empty.
 
-The session transcript is not changed. The stabilizer records which patches it left out as a
-`pi-prefix-stabilizer` custom entry, so a resume, `/reload` or fork sends the same request. A
+The session transcript is not changed. The stabilizer records each patch it leaves out as a
+`pi-prefix-stabilizer` custom entry when it first leaves it out, so a resume, `/reload`, fork
+or `/tree` sends the same request. A run counts as typed only when its first request ends in
+the prompt `before_agent_start` saw. A
 session from before 0.3.0 is sent as pi recorded it. The trade-off: an extension section
 genuinely removed during a run that no typed prompt started stays in the request until a
 later patch changes that section.

@@ -347,6 +347,19 @@ function keepExtensionSections(messages: any[], dropped: Set<number>): any[] {
 	return changed ? out : messages;
 }
 
+/** Whether a user message after the last assistant message starts with `prompt`. */
+function endsWithPrompt(messages: any[], prompt: string): boolean {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (message?.role === "assistant") return false;
+		if (message?.role !== "user") continue;
+		const content = message.content;
+		const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((part: any) => part?.text ?? "").join("") : "";
+		if (text.startsWith(prompt)) return true;
+	}
+	return false;
+}
+
 function isEmptySystemMessage(message: any): boolean {
 	const content = message.content;
 	const hasContent = typeof content === "string" ? content.length > 0 : Array.isArray(content) && content.length > 0;
@@ -364,11 +377,11 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 	// prompt adds the same text back. Each flip changes the prompt the model sees, and for
 	// models without mid-conversation system messages pi folds it into the leading system
 	// message, losing the whole cached prefix twice. Those removals are left out of the
-	// request copy; the transcript is untouched. Which patches they are is recorded in the
-	// session so a resume, reload or fork sends the same request.
+	// request copy; the transcript is untouched. Each one is recorded in the session as soon
+	// as it is dropped, so a resume, reload, fork or /tree sends the same request.
 	const droppedRemovals = new Set<number>();
-	let typedPromptPending = false;
-	let run: { typed: boolean; before?: Set<number>; recorded: number[] } | undefined;
+	let pendingPrompt: string | undefined;
+	let run: { prompt?: string; typed?: boolean; before?: Set<number> } | undefined;
 
 	const restore = (_event: unknown, ctx: any) => {
 		droppedRemovals.clear();
@@ -380,15 +393,17 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 	pi.on("session_start", restore);
 	pi.on("session_tree", restore);
 	pi.on("agent_start", () => {
-		run = { typed: typedPromptPending, recorded: [] };
-		typedPromptPending = false;
+		run = { prompt: pendingPrompt };
+		pendingPrompt = undefined;
 	});
 	pi.on("agent_end", () => {
-		if (run?.recorded.length) pi.appendEntry(ENTRY_TYPE, { droppedRemovals: run.recorded });
 		run = undefined;
 	});
 	pi.on("context_with_system", (event: any) => {
 		const messages: any[] = event?.messages ?? [];
+		// A prompt whose before_agent_start ran can still fail before its run starts, or lose
+		// the start to a notification; only a run whose first request ends in that prompt is typed.
+		if (run && run.typed === undefined) run.typed = run.prompt !== undefined && endsWithPrompt(messages, run.prompt);
 		if (run && !run.typed) {
 			// Patches already in the run's first request were written before it started.
 			run.before ??= new Set(messages.filter(isPatch).map((message) => message.timestamp));
@@ -396,7 +411,7 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 				if (!isPatch(message, index) || run.before.has(message.timestamp) || droppedRemovals.has(message.timestamp)) continue;
 				if (!removesExtensionSection(message)) continue;
 				droppedRemovals.add(message.timestamp);
-				run.recorded.push(message.timestamp);
+				pi.appendEntry(ENTRY_TYPE, { droppedRemovals: [message.timestamp] });
 			}
 		}
 		const kept = keepExtensionSections(messages, droppedRemovals);
@@ -409,7 +424,7 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 	// that only moves pi's own sections changes nothing the model is told; drop
 	// it. Anything else, even lines reordered inside a section, stays forced.
 	pi.on("before_agent_start", (event: any) => {
-		typedPromptPending = true;
+		pendingPrompt = typeof event?.prompt === "string" ? event.prompt : "";
 		const options = event?.systemPromptOptions;
 		const forced = options?.forceSystemPrompt;
 		if (typeof forced !== "string") return;
