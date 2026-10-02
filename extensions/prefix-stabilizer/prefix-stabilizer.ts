@@ -302,20 +302,21 @@ function promptSections(text: string): string[] {
 	return sections.sort();
 }
 
+// Sections pi builds itself (buildSystemPromptSections in pi's system-prompt.js). Any other
+// name was contributed by an extension, which pi only consults in before_agent_start.
+const PI_SECTIONS = new Set(["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"]);
+const ENTRY_TYPE = "pi-prefix-stabilizer";
+
+const isPatch = (message: any, index: number): boolean => index > 0 && message?.role === "system" && Boolean(message.sections);
+const removesExtensionSection = (message: any): boolean =>
+	Object.entries(message.sections).some(([name, value]) => value === null && !PI_SECTIONS.has(name));
+
 /**
- * Keep extension sections in the request when a run never consulted the extensions.
- *
- * Runs started by an extension message (a background-task notification, for example) skip
- * before_agent_start, so pi diffs Pi's base prompt against the transcript and records every
- * extension-contributed section as removed; the next typed prompt adds them back. Each flip
- * changes the prompt the model sees, and for models without mid-conversation system messages
- * pi folds it into the leading system message, so the whole cached prefix is lost twice.
- *
- * Pi writes a typed-prompt run's patch directly before its user message. A removal in any
- * other patch says only that the hook did not run, so it is left out of the request. The
- * transcript itself is untouched: this runs on the request copy only.
+ * The request copy of `messages` without the extension-section removals in `dropped`
+ * (patch timestamps), without patch entries that set a section to the text it already has,
+ * and without the patches this leaves empty. Returns `messages` itself when nothing changes.
  */
-function keepExtensionSections(messages: any[]): any[] {
+function keepExtensionSections(messages: any[], dropped: Set<number>): any[] {
 	const current = new Map<string, unknown>();
 	let changed = false;
 	const out: any[] = [];
@@ -324,10 +325,9 @@ function keepExtensionSections(messages: any[]): any[] {
 			out.push(message);
 			continue;
 		}
-		const typedPrompt = messages[index + 1]?.role === "user";
 		const kept: Record<string, unknown> = {};
 		for (const [name, value] of Object.entries(message.sections)) {
-			if (index > 0 && value === null && !typedPrompt) continue;
+			if (index > 0 && value === null && !PI_SECTIONS.has(name) && dropped.has(message.timestamp)) continue;
 			// Re-adding the text the model already has changes nothing it is told.
 			if (index > 0 && value !== null && current.get(name) === value) continue;
 			kept[name] = value;
@@ -358,12 +358,58 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 	let announced = false;
 	let fingerprint: string | null = null;
 
+	// Runs started by an extension message (a background-task notification, for example) skip
+	// before_agent_start, so the patch pi writes at their next turn diffs Pi's base prompt
+	// against the transcript and records every extension section as removed; the next typed
+	// prompt adds the same text back. Each flip changes the prompt the model sees, and for
+	// models without mid-conversation system messages pi folds it into the leading system
+	// message, losing the whole cached prefix twice. Those removals are left out of the
+	// request copy; the transcript is untouched. Which patches they are is recorded in the
+	// session so a resume, reload or fork sends the same request.
+	const droppedRemovals = new Set<number>();
+	let typedPromptPending = false;
+	let run: { typed: boolean; before?: Set<number>; recorded: number[] } | undefined;
+
+	const restore = (_event: unknown, ctx: any) => {
+		droppedRemovals.clear();
+		for (const entry of ctx?.sessionManager?.getBranch?.() ?? []) {
+			if (entry?.type !== "custom" || entry.customType !== ENTRY_TYPE) continue;
+			for (const timestamp of entry.data?.droppedRemovals ?? []) droppedRemovals.add(timestamp);
+		}
+	};
+	pi.on("session_start", restore);
+	pi.on("session_tree", restore);
+	pi.on("agent_start", () => {
+		run = { typed: typedPromptPending, recorded: [] };
+		typedPromptPending = false;
+	});
+	pi.on("agent_end", () => {
+		if (run?.recorded.length) pi.appendEntry(ENTRY_TYPE, { droppedRemovals: run.recorded });
+		run = undefined;
+	});
+	pi.on("context_with_system", (event: any) => {
+		const messages: any[] = event?.messages ?? [];
+		if (run && !run.typed) {
+			// Patches already in the run's first request were written before it started.
+			run.before ??= new Set(messages.filter(isPatch).map((message) => message.timestamp));
+			for (const [index, message] of messages.entries()) {
+				if (!isPatch(message, index) || run.before.has(message.timestamp) || droppedRemovals.has(message.timestamp)) continue;
+				if (!removesExtensionSection(message)) continue;
+				droppedRemovals.add(message.timestamp);
+				run.recorded.push(message.timestamp);
+			}
+		}
+		const kept = keepExtensionSections(messages, droppedRemovals);
+		return kept === messages ? undefined : { messages: kept };
+	});
+
 	// Pi 0.99 applies a prompt returned from before_agent_start to that run only,
 	// and runs started by extension messages never see it, so the leading prompt
 	// alternates and the prefix cache is lost on each switch. A forced prompt
 	// that only moves pi's own sections changes nothing the model is told; drop
 	// it. Anything else, even lines reordered inside a section, stays forced.
 	pi.on("before_agent_start", (event: any) => {
+		typedPromptPending = true;
 		const options = event?.systemPromptOptions;
 		const forced = options?.forceSystemPrompt;
 		if (typeof forced !== "string") return;
@@ -376,11 +422,6 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 			return;
 		}
 		options.forceSystemPrompt = forced;
-	});
-
-	pi.on("context_with_system", (event: any) => {
-		const messages = keepExtensionSections(event?.messages ?? []);
-		return messages === event?.messages ? undefined : { messages };
 	});
 
 	pi.on("before_provider_request", (event: any, ctx?: any) => {

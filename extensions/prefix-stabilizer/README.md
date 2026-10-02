@@ -18,22 +18,24 @@ the stabilizer drops it. A returned prompt that adds, removes or reorders any li
 section is left in place.
 
 Pi 1.0 records prompt changes as system-message patches by section name. A run started by
-an extension message also skips `before_agent_start`, so its patch records every
+an extension message (a background-task notification, for example) skips
+`before_agent_start`, so the patch pi writes at that run's next turn records every
 extension-contributed section as removed (the hook simply did not run), and the next typed
 prompt adds the same text back. For models without `supportsMidConvoSystemMessages` pi folds
 the patches into the leading system message, so each flip rewrites the prompt head; for models
 with it, each flip adds a "Removed section" and an "Updated section" message. Before each
 request the stabilizer leaves out of the request copy:
 
-- removals in a patch that pi did not write directly before a user message, and
+- removals of extension sections in patches written during a run that no typed prompt
+  started (removals of pi's own sections, such as `skills`, are kept), and
 - patch entries that set a section to the text it already has, and the patches this leaves
   empty.
 
-The session transcript is not changed, and the result depends only on the transcript, so
-resume, `/reload` and forks see the same request. Pi writes a typed prompt's patch
-directly before its user message (`messages.unshift(updateMessage)` in pi 1.0), which is what
-tells the two apart. The trade-off: a section genuinely removed during a run that no typed
-prompt started stays in the request until a later patch changes that section.
+The session transcript is not changed. The stabilizer records which patches it left out as a
+`pi-prefix-stabilizer` custom entry, so a resume, `/reload` or fork sends the same request. A
+session from before 0.3.0 is sent as pi recorded it. The trade-off: an extension section
+genuinely removed during a run that no typed prompt started stays in the request until a
+later patch changes that section.
 
 ## External contract
 
