@@ -504,6 +504,15 @@ test("a resumed session keeps dropping the removals it dropped before", () => {
 	assert.equal(unrecorded.contexts[0].replaced, false);
 });
 
+test("/tree to a message written before the record still finds it", () => {
+	// Pi saves a patch and a queued follow-up before the request that records the drop, so
+	// selecting that follow-up in /tree leaves the record off the new branch.
+	const history = [leading, ...typedThenNotified, flip(7), user("is it done?", 8)];
+	const recorded = { type: "custom", customType: "pi-prefix-stabilizer", data: { droppedRemovals: [7] } };
+	const { contexts } = runSteps([{ on: "session_tree", branch: [], entries: [recorded] }, { on: "context", messages: history }]);
+	assert.deepEqual(sectionsAfter(contexts[0].messages), leading.sections);
+});
+
 test("changes the model should see pass through unchanged", () => {
 	const messages = [
 		leading,

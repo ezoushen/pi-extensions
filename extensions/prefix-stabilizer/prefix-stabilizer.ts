@@ -383,9 +383,12 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 	let pendingPrompt: string | undefined;
 	let run: { prompt?: string; typed?: boolean; before?: Set<number> } | undefined;
 
+	// Timestamps identify a patch across the whole session file, so every record counts, not
+	// just those on the current branch: pi saves a patch (and a follow-up queued with it)
+	// before the request that records it, and /tree can select a message in between.
 	const restore = (_event: unknown, ctx: any) => {
 		droppedRemovals.clear();
-		for (const entry of ctx?.sessionManager?.getBranch?.() ?? []) {
+		for (const entry of ctx?.sessionManager?.getEntries?.() ?? []) {
 			if (entry?.type !== "custom" || entry.customType !== ENTRY_TYPE) continue;
 			for (const timestamp of entry.data?.droppedRemovals ?? []) droppedRemovals.add(timestamp);
 		}
