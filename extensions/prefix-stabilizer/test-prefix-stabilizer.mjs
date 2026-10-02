@@ -375,6 +375,109 @@ test("a forced prompt that withholds a tool stays forced", () => {
 	assert.equal(runAgentStart(structuredSections, narrowed), narrowed);
 });
 
+const contextFixture = join(repoRoot, "test", "fixtures", "run-prefix-stabilizer-context.mjs");
+
+function runContext(messages) {
+	const home = mkdtempSync(join(tmpdir(), "pi-prefix-stabilizer-context-"));
+	const environment = { ...process.env, HOME: home, PREFIX_STABILIZER_TEST_MESSAGES: JSON.stringify(messages) };
+	delete environment.PI_CODING_AGENT_DIR;
+	try {
+		return JSON.parse(
+			execFileSync(process.execPath, ["--experimental-strip-types", contextFixture, source], {
+				cwd: home,
+				env: environment,
+				encoding: "utf8",
+			}),
+		);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+}
+
+// The transcript shape pi 1.0 records: a leading system message with every section, then
+// patches by name. Pi writes a typed-prompt run's patch directly before the user message; a
+// run started by an extension message (a background-task notification) skips
+// before_agent_start, so its patch, written mid-run, removes every extension section.
+const harness = "<automattic_harness>\nread the adapter first\n</automattic_harness>";
+const shellPolicy = "<pi_background_shell_policy>\nuse posix sh\n</pi_background_shell_policy>";
+const leading = {
+	role: "system",
+	content: "",
+	sections: { preamble: "You are pi.", tools: "<tools>\n- read\n</tools>", automattic_harness: harness, pi_background_shell_policy: shellPolicy },
+	timestamp: 1,
+};
+const user = (text, timestamp) => ({ role: "user", content: [{ type: "text", text }], timestamp });
+const assistant = (text, timestamp) => ({ role: "assistant", content: [{ type: "text", text }], timestamp });
+const notification = (timestamp) => ({ role: "custom", customType: "background-task-notification", content: "task done", display: true, timestamp });
+const patch = (sections, timestamp) => ({ role: "system", content: "", sections, timestamp });
+const sectionsAfter = (messages) => {
+	const current = {};
+	for (const message of messages) {
+		if (message.role !== "system") continue;
+		for (const [name, value] of Object.entries(message.sections ?? {})) {
+			if (value === null) delete current[name];
+			else current[name] = value;
+		}
+	}
+	return current;
+};
+
+test("a run started by an extension message does not remove extension sections from the request", () => {
+	const messages = [
+		leading,
+		user("start the review", 2),
+		assistant("started", 3),
+		notification(4),
+		patch({ automattic_harness: null, pi_background_shell_policy: null }, 5),
+		assistant("checked", 6),
+	];
+	const { messages: sent } = runContext(messages);
+	assert.deepEqual(sectionsAfter(sent), leading.sections);
+});
+
+test("a flip and its re-add on the next typed prompt leave nothing for the model to see", () => {
+	// The 04:47 -> 05:41 sequence from a real session: the notification run removes both
+	// sections, the next typed prompt adds the same text back.
+	const messages = [
+		leading,
+		user("start the review", 2),
+		assistant("started", 3),
+		notification(4),
+		patch({ automattic_harness: null, pi_background_shell_policy: null }, 5),
+		assistant("checked", 6),
+		patch({ automattic_harness: harness, pi_background_shell_policy: shellPolicy }, 7),
+		user("did codex finish?", 8),
+	];
+	const { messages: sent } = runContext(messages);
+	assert.deepEqual(sent.filter((message) => message.role === "system"), [leading]);
+	assert.deepEqual(
+		sent.filter((message) => message.role !== "system"),
+		messages.filter((message) => message.role !== "system"),
+	);
+});
+
+test("changes the model should see pass through unchanged", () => {
+	const messages = [
+		leading,
+		user("start", 2),
+		assistant("ok", 3),
+		// A typed prompt that really drops a section and rewrites another.
+		patch({ automattic_harness: null, tools: "<tools>\n- read\n- bash\n</tools>" }, 4),
+		user("go on", 5),
+		assistant("ok", 6),
+		notification(7),
+		// A notification run that changes text (not a removal) and declares a tool.
+		{ ...patch({ pi_background_shell_policy: "<pi_background_shell_policy>\nuse zsh\n</pi_background_shell_policy>" }, 8), toolsAdded: [{ name: "bash" }] },
+		assistant("done", 9),
+		// A system message with its own text and no sections.
+		{ role: "system", content: "Context compacted.", timestamp: 10 },
+		user("next", 11),
+	];
+	const result = runContext(messages);
+	assert.equal(result.replaced, false);
+	assert.deepEqual(result.messages, messages);
+});
+
 test("packed package installs and registers through pi's loader", async () => {
 	const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 	assert.equal(manifest.name, "pi-prefix-stabilizer");

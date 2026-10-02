@@ -302,6 +302,57 @@ function promptSections(text: string): string[] {
 	return sections.sort();
 }
 
+/**
+ * Keep extension sections in the request when a run never consulted the extensions.
+ *
+ * Runs started by an extension message (a background-task notification, for example) skip
+ * before_agent_start, so pi diffs Pi's base prompt against the transcript and records every
+ * extension-contributed section as removed; the next typed prompt adds them back. Each flip
+ * changes the prompt the model sees, and for models without mid-conversation system messages
+ * pi folds it into the leading system message, so the whole cached prefix is lost twice.
+ *
+ * Pi writes a typed-prompt run's patch directly before its user message. A removal in any
+ * other patch says only that the hook did not run, so it is left out of the request. The
+ * transcript itself is untouched: this runs on the request copy only.
+ */
+function keepExtensionSections(messages: any[]): any[] {
+	const current = new Map<string, unknown>();
+	let changed = false;
+	const out: any[] = [];
+	for (const [index, message] of messages.entries()) {
+		if (message?.role !== "system" || !message.sections) {
+			out.push(message);
+			continue;
+		}
+		const typedPrompt = messages[index + 1]?.role === "user";
+		const kept: Record<string, unknown> = {};
+		for (const [name, value] of Object.entries(message.sections)) {
+			if (index > 0 && value === null && !typedPrompt) continue;
+			// Re-adding the text the model already has changes nothing it is told.
+			if (index > 0 && value !== null && current.get(name) === value) continue;
+			kept[name] = value;
+			if (value === null) current.delete(name);
+			else current.set(name, value);
+		}
+		if (Object.keys(kept).length === Object.keys(message.sections).length) {
+			out.push(message);
+			continue;
+		}
+		changed = true;
+		const { sections: _dropped, ...rest } = message;
+		const patched = Object.keys(kept).length ? { ...rest, sections: kept } : rest;
+		if (index > 0 && isEmptySystemMessage(patched)) continue;
+		out.push(patched);
+	}
+	return changed ? out : messages;
+}
+
+function isEmptySystemMessage(message: any): boolean {
+	const content = message.content;
+	const hasContent = typeof content === "string" ? content.length > 0 : Array.isArray(content) && content.length > 0;
+	return !hasContent && !message.sections && !message.toolsAdded?.length && !message.toolsRemoved?.length;
+}
+
 export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 	if (DISABLED) return;
 	let announced = false;
@@ -325,6 +376,11 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 			return;
 		}
 		options.forceSystemPrompt = forced;
+	});
+
+	pi.on("context_with_system", (event: any) => {
+		const messages = keepExtensionSections(event?.messages ?? []);
+		return messages === event?.messages ? undefined : { messages };
 	});
 
 	pi.on("before_provider_request", (event: any, ctx?: any) => {
