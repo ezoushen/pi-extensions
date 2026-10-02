@@ -13,7 +13,8 @@
  *
  * Design notes worth keeping:
  *
- * - Timing runs from `before_agent_start` to `agent_settled`, not `agent_end`.
+ * - Timing runs from `before_agent_start` (or `agent_start`, for a run an extension
+ *   message starts) to `agent_settled`, not `agent_end`.
  *   After `agent_end` pi may still auto-retry, auto-compact and retry, or drain a
  *   queued follow-up, so ending there would split one work span into several
  *   partial measurements.
