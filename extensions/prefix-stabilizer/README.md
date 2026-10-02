@@ -17,6 +17,29 @@ in a different order (pi-permission-system moves the tool list to the end, for e
 the stabilizer drops it. A returned prompt that adds, removes or reorders any line within a
 section is left in place.
 
+Pi 1.0 records prompt changes as system-message patches by section name. A run started by
+an extension message (a background-task notification, for example) skips
+`before_agent_start`, so the patch pi writes at that run's next turn records every
+extension-contributed section as removed (the hook simply did not run), and the next typed
+prompt adds the same text back. For models without `supportsMidConvoSystemMessages` pi folds
+the patches into the leading system message, so each flip rewrites the prompt head; for models
+with it, each flip adds a "Removed section" and an "Updated section" message. Before each
+request the stabilizer leaves out of the request copy:
+
+- removals of extension sections in patches written during a run that no typed prompt
+  started (removals of pi's own sections, such as `skills`, are kept), and
+- patch entries that set a section to the text it already has, and the patches this leaves
+  empty.
+
+The session transcript is not changed. The stabilizer records each patch it leaves out as a
+`pi-prefix-stabilizer` custom entry when it first leaves it out, so a resume, `/reload` or
+`/tree` sends the same request. A fork copies only the branch up to the selected message, so
+forking from a follow-up that was queued in the same turn as a dropped patch loses that record. A run counts as typed only when its first request ends in
+the prompt `before_agent_start` saw. A
+session from before 0.3.0 is sent as pi recorded it. The trade-off: an extension section
+genuinely removed during a run that no typed prompt started stays in the request until a
+later patch changes that section.
+
 ## External contract
 
 The provider must offer content-addressed prefix caching whose cache key depends on

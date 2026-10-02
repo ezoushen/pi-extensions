@@ -302,10 +302,124 @@ function promptSections(text: string): string[] {
 	return sections.sort();
 }
 
+// Sections pi builds itself (buildSystemPromptSections in pi's system-prompt.js). Any other
+// name was contributed by an extension, which pi only consults in before_agent_start.
+const PI_SECTIONS = new Set(["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"]);
+const ENTRY_TYPE = "pi-prefix-stabilizer";
+
+const isPatch = (message: any, index: number): boolean => index > 0 && message?.role === "system" && Boolean(message.sections);
+const removesExtensionSection = (message: any): boolean =>
+	Object.entries(message.sections).some(([name, value]) => value === null && !PI_SECTIONS.has(name));
+
+/**
+ * The request copy of `messages` without the extension-section removals in `dropped`
+ * (patch timestamps), without patch entries that set a section to the text it already has,
+ * and without the patches this leaves empty. Returns `messages` itself when nothing changes.
+ */
+function keepExtensionSections(messages: any[], dropped: Set<number>): any[] {
+	const current = new Map<string, unknown>();
+	let changed = false;
+	const out: any[] = [];
+	for (const [index, message] of messages.entries()) {
+		if (message?.role !== "system" || !message.sections) {
+			out.push(message);
+			continue;
+		}
+		const kept: Record<string, unknown> = {};
+		for (const [name, value] of Object.entries(message.sections)) {
+			if (index > 0 && value === null && !PI_SECTIONS.has(name) && dropped.has(message.timestamp)) continue;
+			// Re-adding the text the model already has changes nothing it is told.
+			if (index > 0 && value !== null && current.get(name) === value) continue;
+			kept[name] = value;
+			if (value === null) current.delete(name);
+			else current.set(name, value);
+		}
+		if (Object.keys(kept).length === Object.keys(message.sections).length) {
+			out.push(message);
+			continue;
+		}
+		changed = true;
+		const { sections: _dropped, ...rest } = message;
+		const patched = Object.keys(kept).length ? { ...rest, sections: kept } : rest;
+		if (index > 0 && isEmptySystemMessage(patched)) continue;
+		out.push(patched);
+	}
+	return changed ? out : messages;
+}
+
+/** Whether a user message after the last assistant message starts with `prompt`. */
+function endsWithPrompt(messages: any[], prompt: string): boolean {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (message?.role === "assistant") return false;
+		if (message?.role !== "user") continue;
+		const content = message.content;
+		const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((part: any) => part?.text ?? "").join("") : "";
+		if (text.startsWith(prompt)) return true;
+	}
+	return false;
+}
+
+function isEmptySystemMessage(message: any): boolean {
+	const content = message.content;
+	const hasContent = typeof content === "string" ? content.length > 0 : Array.isArray(content) && content.length > 0;
+	return !hasContent && !message.sections && !message.toolsAdded?.length && !message.toolsRemoved?.length;
+}
+
 export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 	if (DISABLED) return;
 	let announced = false;
 	let fingerprint: string | null = null;
+
+	// Runs started by an extension message (a background-task notification, for example) skip
+	// before_agent_start, so the patch pi writes at their next turn diffs Pi's base prompt
+	// against the transcript and records every extension section as removed; the next typed
+	// prompt adds the same text back. Each flip changes the prompt the model sees, and for
+	// models without mid-conversation system messages pi folds it into the leading system
+	// message, losing the whole cached prefix twice. Those removals are left out of the
+	// request copy; the transcript is untouched. Each one is recorded in the session as soon
+	// as it is dropped, so a resume, reload, fork or /tree sends the same request.
+	const droppedRemovals = new Set<number>();
+	let pendingPrompt: string | undefined;
+	let run: { prompt?: string; typed?: boolean; before?: Set<number> } | undefined;
+
+	// Timestamps identify a patch across the whole session file, so every record counts, not
+	// just those on the current branch: pi saves a patch (and a follow-up queued with it)
+	// before the request that records it, and /tree can select a message in between.
+	const restore = (_event: unknown, ctx: any) => {
+		droppedRemovals.clear();
+		for (const entry of ctx?.sessionManager?.getEntries?.() ?? []) {
+			if (entry?.type !== "custom" || entry.customType !== ENTRY_TYPE) continue;
+			for (const timestamp of entry.data?.droppedRemovals ?? []) droppedRemovals.add(timestamp);
+		}
+	};
+	pi.on("session_start", restore);
+	pi.on("session_tree", restore);
+	pi.on("agent_start", () => {
+		run = { prompt: pendingPrompt };
+		pendingPrompt = undefined;
+	});
+	pi.on("agent_end", () => {
+		run = undefined;
+	});
+	pi.on("context_with_system", (event: any) => {
+		const messages: any[] = event?.messages ?? [];
+		// A prompt whose before_agent_start ran can still fail before its run starts, or lose
+		// the start to a notification; only a run whose first request ends in that prompt is typed.
+		if (run && run.typed === undefined) run.typed = run.prompt !== undefined && endsWithPrompt(messages, run.prompt);
+		if (run && !run.typed) {
+			// Patches already in the run's first request were written before it started.
+			run.before ??= new Set(messages.filter(isPatch).map((message) => message.timestamp));
+			for (const [index, message] of messages.entries()) {
+				if (!isPatch(message, index) || run.before.has(message.timestamp) || droppedRemovals.has(message.timestamp)) continue;
+				if (!removesExtensionSection(message)) continue;
+				droppedRemovals.add(message.timestamp);
+				pi.appendEntry(ENTRY_TYPE, { droppedRemovals: [message.timestamp] });
+			}
+		}
+		const kept = keepExtensionSections(messages, droppedRemovals);
+		return kept === messages ? undefined : { messages: kept };
+	});
 
 	// Pi 0.99 applies a prompt returned from before_agent_start to that run only,
 	// and runs started by extension messages never see it, so the leading prompt
@@ -313,6 +427,7 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 	// that only moves pi's own sections changes nothing the model is told; drop
 	// it. Anything else, even lines reordered inside a section, stays forced.
 	pi.on("before_agent_start", (event: any) => {
+		pendingPrompt = typeof event?.prompt === "string" ? event.prompt : "";
 		const options = event?.systemPromptOptions;
 		const forced = options?.forceSystemPrompt;
 		if (typeof forced !== "string") return;
