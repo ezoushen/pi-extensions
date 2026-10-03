@@ -1,6 +1,6 @@
 {
   "name": "pi-focus-mode",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Keep Pi exchanges focused with foldable progress and stats.",
   "type": "module",
   "main": "./focus-mode.js",

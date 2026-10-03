@@ -74,6 +74,16 @@ const FOLD_KEYS = {
 } as const;
 const CURSOR_SETTING = { cursorMode: { default: false, env: "PI_FOCUS_MODE_CURSOR_MODE", parseEnv: (value: string) => value === "true" } } as const;
 const SUMMARY_SETTING = { summaryModel: { default: "", env: "PI_FOCUS_MODE_SUMMARY_MODEL" } } as const;
+/** Every field a card can show, in the order a card shows them. */
+const CARD_FIELDS = ["duration", "finishTime", "model", "input", "output", "tps", "cache", "waiting", "cost"] as const;
+type CardField = (typeof CARD_FIELDS)[number];
+const CARD_FIELDS_SETTING = {
+	cardFields: {
+		default: [...CARD_FIELDS] as unknown,
+		env: "PI_FOCUS_MODE_CARD_FIELDS",
+		parseEnv: (value: string): unknown => value.split(",").map((name) => name.trim()).filter(Boolean),
+	},
+} as const;
 
 interface TokenTotals {
 	input: number;
@@ -142,6 +152,8 @@ interface ExchangeRecord extends TokenTotals {
 	waitingMs: number;
 	/** Wall time tools held across the span. */
 	toolMs: number;
+	/** Model time across the span (the turns' `modelMs`); absent on entries before 0.2.0. */
+	modelMs?: number;
 	model: string;
 	stopReason: string;
 	/** Present on exchange entries written after block titles became persistent. */
@@ -183,6 +195,18 @@ function fmtTokens(n: number): string {
 	if (n < 1_000) return `${Math.round(n)}`;
 	if (n < 1_000_000) return `${(n / 1_000).toFixed(1)}k`;
 	return `${(n / 1_000_000).toFixed(2)}M`;
+}
+
+function fmtRate(perSecond: number): string {
+	return perSecond >= 10 ? `${Math.round(perSecond)}` : perSecond.toFixed(1);
+}
+
+/** Output tokens per second of model time, the turns' wall time less the tools they ran. */
+function outputPerSecond(data: ExchangeRecord): number | undefined {
+	// Before 0.2.0 only turns recorded model time; session cards and turn-less entries show no rate.
+	const modelMs = data.modelMs ?? (data.turns?.length ? data.turns.reduce((sum, turn) => sum + turn.modelMs, 0) : undefined);
+	if (!(data.output > 0) || !(modelMs !== undefined && modelMs > 0)) return undefined;
+	return data.output / (modelMs / 1_000);
 }
 
 function fmtCost(cost: number): string {
@@ -273,6 +297,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	let warnedAboutToolFold = false;
 	let warnedAboutThinkingFold = false;
 	let summaryScheduler: HeadlineScheduler | undefined;
+	let cardFields = new Set<CardField>(CARD_FIELDS);
 	let summarySession = 0;
 	let restoredEntries: FoldSessionEntry[] = [];
 	let sessionTotals = {
@@ -282,6 +307,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		durationMs: 0,
 		toolMs: 0,
 		waitingMs: 0,
+		modelMs: 0,
 	};
 	let sessionStartedAt = 0;
 
@@ -403,6 +429,20 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		else if (running && !inExchange) toolFold.beginExchange(exchangeIndex);
 	}
 
+	/** The fields cards show; unknown names are dropped with one warning, and a list with none valid shows every field. */
+	function resolveCardFields(ctx: ExtensionContext, session: number): Set<CardField> {
+		const value = resolveSettings("focus-mode", CARD_FIELDS_SETTING, {
+			cwd: ctx.cwd ?? process.cwd(), hasUI: ctx.hasUI, isProjectTrusted: () => ctx.isProjectTrusted?.() ?? false,
+		}, settingsRuntime).cardFields.value;
+		const names = Array.isArray(value) ? value.map(String) : [];
+		const known = names.filter((name): name is CardField => (CARD_FIELDS as readonly string[]).includes(name));
+		if (known.length !== names.length || !Array.isArray(value)) {
+			const unknown = Array.isArray(value) ? names.filter((name) => !known.includes(name as CardField)).join(", ") : JSON.stringify(value);
+			announce(ctx, `focus-mode: cardFields ignores ${unknown}; fields are ${CARD_FIELDS.join(", ")}`, "warning", `focus-mode:card-fields:${session}`);
+		}
+		return new Set(known.length > 0 ? known : CARD_FIELDS);
+	}
+
 	// ---- Transcript card ----
 
 	pi.registerEntryRenderer<ExchangeRecord>(ENTRY_TYPE, (entry, _options, theme) => {
@@ -420,18 +460,28 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			return box;
 		}
 
-		const isSession = data.kind === "session";
-		const finishTime = data.endedAt === undefined ? "" : ` · ${fmtLocalFinishTime(data.endedAt)}`;
-		const headline = isSession
-			? `📊 Session · ${plural(data.turnCount, "turn")} across ${plural(data.index, "exchange")}`
-			: `⏱ ${fmtDuration(data.durationMs)}${finishTime}`;
+		const show = (field: CardField) => cardFields.has(field);
+		const headline: string[] = [];
+		if (data.kind === "session") headline.push(`📊 Session · ${plural(data.turnCount, "turn")} across ${plural(data.index, "exchange")}`);
+		else {
+			if (show("duration")) headline.push(`⏱ ${fmtDuration(data.durationMs)}`);
+			if (show("finishTime") && data.endedAt !== undefined) headline.push(fmtLocalFinishTime(data.endedAt));
+		}
+		if (show("model")) headline.push(data.model);
 
-		const summary = [`in ${fmtTokens(data.input)}`, `out ${fmtTokens(data.output)}`];
-		const cache = fmtCacheUsage(data.cacheRead, data.cacheWrite);
+		const summary: string[] = [];
+		if (show("input")) summary.push(`in ${fmtTokens(data.input)}`);
+		if (show("output")) summary.push(`out ${fmtTokens(data.output)}`);
+		const rate = show("tps") ? outputPerSecond(data) : undefined;
+		if (rate !== undefined) summary.push(`${fmtRate(rate)} tps`);
+		const cache = show("cache") ? fmtCacheUsage(data.cacheRead, data.cacheWrite) : undefined;
 		if (cache) summary.push(cache);
-		if (data.waitingMs > 0) summary.push(`waiting ${fmtDuration(data.waitingMs)}`);
-		summary.push(fmtCost(data.cost));
-		box.addChild(new Text(dimText(`${headline} · ${data.model} (${summary.join(" · ")})`), 0, 0));
+		if (show("waiting") && data.waitingMs > 0) summary.push(`waiting ${fmtDuration(data.waitingMs)}`);
+		if (show("cost")) summary.push(fmtCost(data.cost));
+		const metrics = summary.length > 0 ? `(${summary.join(" · ")})` : "";
+		// Chosen fields can all be empty for this entry (no finish time, no waiting); keep the card readable.
+		const line = [headline.join(" · "), metrics].filter(Boolean).join(" ") || `⏱ ${fmtDuration(data.durationMs)}`;
+		box.addChild(new Text(dimText(line), 0, 0));
 
 		return box;
 	});
@@ -446,13 +496,14 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		outputPad = 1;
 		lastStatus = "";
 		restoredEntries = [];
-		sessionTotals = { ...emptyTotals(), exchanges: 0, turnCount: 0, durationMs: 0, toolMs: 0, waitingMs: 0 };
+		sessionTotals = { ...emptyTotals(), exchanges: 0, turnCount: 0, durationMs: 0, toolMs: 0, waitingMs: 0, modelMs: 0 };
 		toolPatch = installToolFold(toolComponent, toolFold, getTitleTheme, () => outputPad);
 		thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold, getTitleTheme, requestRender, (padding) => { outputPad = padding; });
 		themeContext = ctx;
 		const session = ++summarySession;
 		summaryScheduler?.dispose();
 		summaryScheduler = undefined;
+		cardFields = resolveCardFields(ctx, session);
 		const summaryValue = resolveSettings("focus-mode", SUMMARY_SETTING, {
 			cwd: ctx.cwd ?? process.cwd(), hasUI: ctx.hasUI, isProjectTrusted: () => ctx.isProjectTrusted?.() ?? false,
 		}, settingsRuntime).summaryModel.value;
@@ -709,6 +760,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		const durationMs = endedAt - startedAt;
 		const progressDurationMs = toolFold.progressDurationForExchange(exchangeIndex);
 		const toolMs = turns.reduce((sum: number, turn: TurnRecord) => sum + turn.toolMs, 0);
+		const modelMs = turns.reduce((sum: number, turn: TurnRecord) => sum + turn.modelMs, 0);
 		const record: ExchangeRecord = {
 			...totals,
 			kind: "exchange",
@@ -722,6 +774,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			...(progressDurationMs === undefined ? {} : { progressDurationMs }),
 			waitingMs,
 			toolMs,
+			modelMs,
 			model,
 			stopReason,
 			blocks: toolFold.recordsForExchange(exchangeIndex),
@@ -741,6 +794,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		sessionTotals.durationMs += durationMs;
 		sessionTotals.toolMs += toolMs;
 		sessionTotals.waitingMs += waitingMs;
+		sessionTotals.modelMs += modelMs;
 
 		try {
 			pi.appendEntry<ExchangeRecord>(ENTRY_TYPE, record);
