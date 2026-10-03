@@ -203,7 +203,7 @@ function fmtRate(perSecond: number): string {
 
 /** Output tokens per second of model time, the turns' wall time less the tools they ran. */
 function outputPerSecond(data: ExchangeRecord): number | undefined {
-	// Entries written before 0.2.0 carry no model time; those show no rate.
+	// Before 0.2.0 only turns recorded model time; session cards and turn-less entries show no rate.
 	const modelMs = data.modelMs ?? (data.turns?.length ? data.turns.reduce((sum, turn) => sum + turn.modelMs, 0) : undefined);
 	if (!(data.output > 0) || !(modelMs !== undefined && modelMs > 0)) return undefined;
 	return data.output / (modelMs / 1_000);

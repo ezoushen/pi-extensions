@@ -78,7 +78,8 @@ nonzero (or `cache W written` when there are writes but no reads), waiting time 
 when nonzero, and total cost at the end even when it is `$0`. Output speed is output tokens
 (thinking included) over model time, the sum of each turn's wall time less the tools it ran;
 a session card sums the model time of its exchanges. It is omitted when there is no output
-or no model time, including on entries written before 0.2.0, which do not record it. `cardFields` chooses which of these fields cards show (see Settings). Cards omit turns,
+or no model time. Exchange entries from older versions get it from their turns; older session
+cards and entries without turns did not record model time and show no rate. `cardFields` chooses which of these fields cards show (see Settings). Cards omit turns,
 prompts, tools, thinking, and total-token details. Block titles carry individual
 timing and count details.
 
