@@ -76,10 +76,9 @@ its turn and exchange counts and follows the same model and metrics layout. Metr
 show input and output tokens, output speed as `N tps`, cache reads as `cache R` with `/ W written` when cache writes are
 nonzero (or `cache W written` when there are writes but no reads), waiting time only
 when nonzero, and total cost at the end even when it is `$0`. Output speed is output tokens
-(thinking included) over model time: an exchange sums its turns' model time, which leaves
-out tool time; a session card uses wall time less tool and waiting time. It is omitted when
-there is no output or no model time, including for entries from older versions that lack
-the timing. `cardFields` chooses which of these fields cards show (see Settings). Cards omit turns,
+(thinking included) over model time, the sum of each turn's wall time less the tools it ran;
+a session card sums the model time of its exchanges. It is omitted when there is no output
+or no model time, including on entries written before 0.2.0, which do not record it. `cardFields` chooses which of these fields cards show (see Settings). Cards omit turns,
 prompts, tools, thinking, and total-token details. Block titles carry individual
 timing and count details.
 
@@ -200,7 +199,8 @@ or a trusted project's `.pi/focus-mode.json`, for example:
 
 `PI_FOCUS_MODE_CARD_FIELDS` overrides the files with a comma-separated list, such as
 `duration,tps,cost`. Unknown names are ignored with one warning; a list with no valid
-name shows every field. The setting is read when a session starts, so run `/reload` after
+name shows every field. A card whose chosen fields are all empty for it (a finish time on
+an old entry, or waiting when there was none) shows its duration. The setting is read when a session starts, so run `/reload` after
 changing it. It changes only how cards are drawn, so existing cards follow it too.
 
 ## Install and verify

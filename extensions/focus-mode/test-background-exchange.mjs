@@ -9,10 +9,10 @@ initTheme("dark");
 // message (a background-task notification) begins at agent_start, and its response must
 // still end with an exchange card.
 function mount() {
-	const handlers = new Map(), entries = [];
+	const handlers = new Map(), entries = [], commands = new Map();
 	registerExchangeStats({
 		on: (name, handler) => handlers.set(name, handler),
-		registerShortcut() {}, registerCommand() {}, registerEntryRenderer() {},
+		registerShortcut() {}, registerCommand: (name, value) => commands.set(name, value.handler), registerEntryRenderer() {},
 		appendEntry: (customType, data) => entries.push({ type: "custom", customType, data }),
 	}, ToolExecutionComponent, { agentDir: "/nonexistent", environment: {} });
 	const ctx = { hasUI: true, cwd: "/nonexistent", model: { id: "test" }, isProjectTrusted: () => false,
@@ -27,7 +27,7 @@ function mount() {
 		fire("turn_end", { message });
 	};
 	const cards = () => entries.filter((entry) => entry.customType === "exchange-stats").map((entry) => entry.data);
-	return { fire, answer, cards, close: () => handlers.get("session_shutdown")() };
+	return { fire, answer, cards, exstats: () => commands.get("exstats")("", ctx), close: () => handlers.get("session_shutdown")() };
 }
 
 const usage = (input, output, cost) => ({ input, output, reasoning: 0, cacheRead: 100, cacheWrite: 0, totalTokens: input + output + 100, cost: { total: cost } });
@@ -76,5 +76,20 @@ test("typed and background runs get separate, consecutive cards", () => {
 		const cards = m.cards();
 		assert.deepEqual(cards.map((card) => card.index), [1, 2]);
 		assert.deepEqual(cards.map((card) => card.input), [10, 20]);
+	} finally { m.close(); }
+});
+
+test("an exchange record and the session card carry the model time of its turns", () => {
+	const m = mount();
+	try {
+		m.fire("agent_start");
+		m.answer(100, usage(10, 5, 0.01));
+		m.fire("agent_end");
+		m.fire("agent_settled");
+		const [card] = m.cards();
+		assert.equal(card.modelMs, card.turns.reduce((sum, turn) => sum + turn.modelMs, 0));
+		m.exstats();
+		const session = m.cards().find((entry) => entry.kind === "session");
+		assert.equal(session.modelMs, card.modelMs);
 	} finally { m.close(); }
 });

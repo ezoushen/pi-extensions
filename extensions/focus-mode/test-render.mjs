@@ -67,6 +67,10 @@ const record010 = {
 	cost: 0.0042,
 };
 
+/** One turn matching a card's own timing, so its rate comes from the card's numbers. */
+const turnOf = (record) => [{ ...record010.turns[0], durationMs: record.durationMs - record.waitingMs, toolMs: record.toolMs,
+	modelMs: record.durationMs - record.toolMs - record.waitingMs, output: record.output }];
+
 function withLocalClock(now, timeZone, action) {
 	const previousTimeZone = process.env.TZ;
 	const previousNow = Date.now;
@@ -157,7 +161,7 @@ test("old records without endedAt render and session cards keep the same one-lin
 		const exchange = renderRows(mounted, oldRecord);
 		assert.deepEqual(exchange, ["⏱ 13.2s · old-model (in 11 · out 7 · 0.5 tps · cache 3 · $0.00420)"]);
 
-		const session = renderRows(mounted, { ...record010, kind: "session" });
+		const session = renderRows(mounted, { ...record010, kind: "session", turns: [], modelMs: 13_200 });
 		assert.deepEqual(session, ["📊 Session · 1 turn across 3 exchanges · old-model (in 11 · out 7 · 0.5 tps · cache 3 · $0.00420)"]);
 	});
 });
@@ -182,9 +186,10 @@ test("a free-model exchange card renders the requested metrics in parentheses", 
 		cost: 0,
 		endedAt: Date.UTC(2026, 8, 24, 9, 47, 56),
 	};
+	record.turns = turnOf(record);
 
 	withLocalClock(Date.UTC(2026, 8, 24, 11), timeZone, () => {
-		assert.deepEqual(renderRows(mounted, record, 120), ["⏱ 799ms · 17:47:56 · ezoushen/ornith-1.5-35b-a3b-splash (in 450 · out 29 · 2.2 tps · cache 25.7k · $0)"]);
+		assert.deepEqual(renderRows(mounted, record, 120), ["⏱ 799ms · 17:47:56 · ezoushen/ornith-1.5-35b-a3b-splash (in 450 · out 29 · 45 tps · cache 25.7k · $0)"]);
 	});
 });
 
@@ -203,8 +208,9 @@ test("exchange and session cards join their headline and metrics and wrap withou
 		waitingMs: 0,
 		cost: 0.0415,
 	};
-	const exchange = "⏱ 4m36s · 17:20:21 · glm-5.3-flash (in 256.1k · out 6.2k · 470 tps · $0.0415)";
-	const session = "📊 Session · 8 turns across 3 exchanges · glm-5.3-flash (in 256.1k · out 6.2k · 470 tps · $0.0415)";
+	record.turns = turnOf(record);
+	const exchange = "⏱ 4m36s · 17:20:21 · glm-5.3-flash (in 256.1k · out 6.2k · 22 tps · $0.0415)";
+	const session = "📊 Session · 8 turns across 3 exchanges · glm-5.3-flash (in 256.1k · out 6.2k · 22 tps · $0.0415)";
 
 	withLocalClock(Date.UTC(2026, 8, 24, 10), timeZone, () => {
 		assert.deepEqual(renderRows(mounted, record, 120), [exchange]);
@@ -212,7 +218,7 @@ test("exchange and session cards join their headline and metrics and wrap withou
 		assert.ok(wrappedExchange.length > 1);
 		assert.equal(wrappedExchange.join(" "), exchange);
 
-		const sessionRecord = { ...record, kind: "session", turnCount: 8, index: 3 };
+		const sessionRecord = { ...record, kind: "session", turnCount: 8, index: 3, turns: [], modelMs: 276_000 };
 		assert.deepEqual(renderRows(mounted, sessionRecord, 120), [session]);
 		const wrappedSession = renderRows(mounted, sessionRecord, 60);
 		assert.ok(wrappedSession.length > 1);
@@ -236,10 +242,11 @@ test("an exchange card puts waiting before total cost and omits folded metrics",
 		cacheWrite: 1_200,
 		cost: 0.23456,
 	};
+	record.turns = turnOf(record);
 	const rows = renderRows(mounted, record, 150);
 
 	assert.equal(rows.length, 1);
-	assert.match(rows[0], /old-model \(in 9.5k · out 234 · 18 tps · cache 67.4k \/ 1.2k written · waiting 500ms · \$0\.2346\)$/);
+	assert.match(rows[0], /old-model \(in 9.5k · out 234 · 43 tps · cache 67.4k \/ 1.2k written · waiting 500ms · \$0\.2346\)$/);
 	for (const metric of ["in 9.5k", "out 234", "cache 67.4k", "waiting 500ms", "$0.2346"]) {
 		assert.equal(rows[0].split(metric).length - 1, 1, `${metric} should appear once`);
 	}
@@ -253,8 +260,10 @@ test("a session card uses the same metrics without active, turn or tool detail",
 		kind: "session",
 		index: 3,
 		waitingMs: 500,
+		turns: [],
+		modelMs: 12_700,
 	};
-	assert.deepEqual(renderRows(mounted, record, 140), ["📊 Session · 1 turn across 3 exchanges · old-model (in 11 · out 7 · 0.5 tps · cache 3 · waiting 500ms · $0.00420)"]);
+	assert.deepEqual(renderRows(mounted, record, 140), ["📊 Session · 1 turn across 3 exchanges · old-model (in 11 · out 7 · 0.6 tps · cache 3 · waiting 500ms · $0.00420)"]);
 });
 
 test("the footer omits zero cost but keeps a positive cost", () => {

@@ -53,12 +53,28 @@ test("a slow exchange shows one decimal, and a card without output shows no rate
 	} finally { m.close(); }
 });
 
-test("a session card's rate is its output over wall time less tools and waiting", () => {
+test("a session card's rate uses the model time its exchanges recorded", () => {
 	const m = mount();
 	try {
-		// 600 tokens over 20s - 4s tools - 1s waiting = 40 tok/s.
-		const session = { ...exchange, kind: "session", index: 3, turnCount: 5, turns: [], durationMs: 20_000, toolMs: 4_000, waitingMs: 1_000, output: 600 };
-		assert.match(m.render(session), /out 600 · 40 tps ·/);
+		// A 20s permission dialog inside a 30s tool span counts as both tool and waiting
+		// time, so wall time less both would leave 10s; the turns measured 30s of model time.
+		const session = { ...exchange, kind: "session", index: 3, turnCount: 5, turns: [], durationMs: 60_000, toolMs: 30_000, waitingMs: 20_000, modelMs: 30_000, output: 900 };
+		assert.match(m.render(session), /out 900 · 30 tps ·/);
+	} finally { m.close(); }
+});
+
+test("an entry without recorded model time shows no rate", () => {
+	const m = mount();
+	try {
+		const old = { ...exchange, turns: undefined, durationMs: 4_000, toolMs: 0, waitingMs: 0, output: 4 };
+		assert.doesNotMatch(m.render(old), /tps/);
+	} finally { m.close(); }
+});
+
+test("a card whose chosen fields have nothing to show falls back to its duration", () => {
+	const m = mount({ config: { cardFields: ["waiting"] } });
+	try {
+		assert.equal(m.render(exchange), "⏱ 9.0s");
 	} finally { m.close(); }
 });
 

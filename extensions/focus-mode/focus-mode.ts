@@ -152,6 +152,8 @@ interface ExchangeRecord extends TokenTotals {
 	waitingMs: number;
 	/** Wall time tools held across the span. */
 	toolMs: number;
+	/** Model time across the span (the turns' `modelMs`); absent on entries before 0.2.0. */
+	modelMs?: number;
 	model: string;
 	stopReason: string;
 	/** Present on exchange entries written after block titles became persistent. */
@@ -199,17 +201,11 @@ function fmtRate(perSecond: number): string {
 	return perSecond >= 10 ? `${Math.round(perSecond)}` : perSecond.toFixed(1);
 }
 
-/**
- * Output tokens per second of model time. An exchange sums its turns' model time (tool
- * time already excluded); a session card has no turns, so it uses wall time less tools
- * and waiting.
- */
+/** Output tokens per second of model time, the turns' wall time less the tools they ran. */
 function outputPerSecond(data: ExchangeRecord): number | undefined {
-	// Entries written by older versions can lack turns or timing; those show no rate.
-	const modelMs = data.turns?.length
-		? data.turns.reduce((sum, turn) => sum + turn.modelMs, 0)
-		: data.durationMs - data.toolMs - data.waitingMs;
-	if (!(data.output > 0) || !(modelMs > 0)) return undefined;
+	// Entries written before 0.2.0 carry no model time; those show no rate.
+	const modelMs = data.modelMs ?? (data.turns?.length ? data.turns.reduce((sum, turn) => sum + turn.modelMs, 0) : undefined);
+	if (!(data.output > 0) || !(modelMs !== undefined && modelMs > 0)) return undefined;
 	return data.output / (modelMs / 1_000);
 }
 
@@ -311,6 +307,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		durationMs: 0,
 		toolMs: 0,
 		waitingMs: 0,
+		modelMs: 0,
 	};
 	let sessionStartedAt = 0;
 
@@ -482,7 +479,9 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		if (show("waiting") && data.waitingMs > 0) summary.push(`waiting ${fmtDuration(data.waitingMs)}`);
 		if (show("cost")) summary.push(fmtCost(data.cost));
 		const metrics = summary.length > 0 ? `(${summary.join(" · ")})` : "";
-		box.addChild(new Text(dimText([headline.join(" · "), metrics].filter(Boolean).join(" ")), 0, 0));
+		// Chosen fields can all be empty for this entry (no finish time, no waiting); keep the card readable.
+		const line = [headline.join(" · "), metrics].filter(Boolean).join(" ") || `⏱ ${fmtDuration(data.durationMs)}`;
+		box.addChild(new Text(dimText(line), 0, 0));
 
 		return box;
 	});
@@ -497,7 +496,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		outputPad = 1;
 		lastStatus = "";
 		restoredEntries = [];
-		sessionTotals = { ...emptyTotals(), exchanges: 0, turnCount: 0, durationMs: 0, toolMs: 0, waitingMs: 0 };
+		sessionTotals = { ...emptyTotals(), exchanges: 0, turnCount: 0, durationMs: 0, toolMs: 0, waitingMs: 0, modelMs: 0 };
 		toolPatch = installToolFold(toolComponent, toolFold, getTitleTheme, () => outputPad);
 		thinkingPatch = installThinkingFold(AssistantMessageComponent, toolFold, getTitleTheme, requestRender, (padding) => { outputPad = padding; });
 		themeContext = ctx;
@@ -761,6 +760,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		const durationMs = endedAt - startedAt;
 		const progressDurationMs = toolFold.progressDurationForExchange(exchangeIndex);
 		const toolMs = turns.reduce((sum: number, turn: TurnRecord) => sum + turn.toolMs, 0);
+		const modelMs = turns.reduce((sum: number, turn: TurnRecord) => sum + turn.modelMs, 0);
 		const record: ExchangeRecord = {
 			...totals,
 			kind: "exchange",
@@ -774,6 +774,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			...(progressDurationMs === undefined ? {} : { progressDurationMs }),
 			waitingMs,
 			toolMs,
+			modelMs,
 			model,
 			stopReason,
 			blocks: toolFold.recordsForExchange(exchangeIndex),
@@ -793,6 +794,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		sessionTotals.durationMs += durationMs;
 		sessionTotals.toolMs += toolMs;
 		sessionTotals.waitingMs += waitingMs;
+		sessionTotals.modelMs += modelMs;
 
 		try {
 			pi.appendEntry<ExchangeRecord>(ENTRY_TYPE, record);
