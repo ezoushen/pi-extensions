@@ -64,7 +64,7 @@ function expectedFinishLabel(at, now, timeZone) {
 function exchangeCardRows(value) {
 	const rows = value.split("\n").map((line) => line.trim());
 	const cardPattern = /^(⏱ (?:\d+(?:\.\d+)?ms|\d+(?:\.\d+)?s|\d+m(?:\d+s)?) · .+ · free-model)(?: \((.*)\))?$/;
-	const metricsPattern = /^in \S+ · out \S+(?: · cache .+)?(?: · waiting \S+)? · \$0$/;
+	const metricsPattern = /^in \S+ · out \S+(?: · \S+ tps)?(?: · cache .+)?(?: · waiting \S+)? · \$0$/;
 	const cards = rows.map((line) => cardPattern.exec(line)).filter(Boolean);
 	const latest = cards.at(-1);
 	const headline = latest?.[1];

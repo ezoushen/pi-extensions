@@ -126,7 +126,7 @@ test("a literal 0.1.0 exchange record renders its local finish time", () => {
 	});
 
 	withLocalClock(Date.UTC(2026, 8, 24, 7), timeZone, () => {
-		assert.deepEqual(renderRows(mounted, record010), ["⏱ 13.2s · " + expectedTime + " · old-model (in 11 · out 7 · cache 3 · $0.00420)"]);
+		assert.deepEqual(renderRows(mounted, record010), ["⏱ 13.2s · " + expectedTime + " · old-model (in 11 · out 7 · 0.5 tps · cache 3 · $0.00420)"]);
 	});
 });
 
@@ -144,7 +144,7 @@ test("an exchange finished on an earlier local day includes the date", () => {
 	});
 
 	withLocalClock(Date.UTC(2026, 8, 24, 7), timeZone, () => {
-		assert.deepEqual(renderRows(mounted, { ...record010, endedAt }), ["⏱ 13.2s · " + expectedDate + " " + expectedTime + " · old-model (in 11 · out 7 · cache 3 · $0.00420)"]);
+		assert.deepEqual(renderRows(mounted, { ...record010, endedAt }), ["⏱ 13.2s · " + expectedDate + " " + expectedTime + " · old-model (in 11 · out 7 · 0.5 tps · cache 3 · $0.00420)"]);
 	});
 });
 
@@ -155,10 +155,10 @@ test("old records without endedAt render and session cards keep the same one-lin
 		const oldRecord = { ...record010 };
 		delete oldRecord.endedAt;
 		const exchange = renderRows(mounted, oldRecord);
-		assert.deepEqual(exchange, ["⏱ 13.2s · old-model (in 11 · out 7 · cache 3 · $0.00420)"]);
+		assert.deepEqual(exchange, ["⏱ 13.2s · old-model (in 11 · out 7 · 0.5 tps · cache 3 · $0.00420)"]);
 
 		const session = renderRows(mounted, { ...record010, kind: "session" });
-		assert.deepEqual(session, ["📊 Session · 1 turn across 3 exchanges · old-model (in 11 · out 7 · cache 3 · $0.00420)"]);
+		assert.deepEqual(session, ["📊 Session · 1 turn across 3 exchanges · old-model (in 11 · out 7 · 0.5 tps · cache 3 · $0.00420)"]);
 	});
 });
 
@@ -184,7 +184,7 @@ test("a free-model exchange card renders the requested metrics in parentheses", 
 	};
 
 	withLocalClock(Date.UTC(2026, 8, 24, 11), timeZone, () => {
-		assert.deepEqual(renderRows(mounted, record), ["⏱ 799ms · 17:47:56 · ezoushen/ornith-1.5-35b-a3b-splash (in 450 · out 29 · cache 25.7k · $0)"]);
+		assert.deepEqual(renderRows(mounted, record, 120), ["⏱ 799ms · 17:47:56 · ezoushen/ornith-1.5-35b-a3b-splash (in 450 · out 29 · 2.2 tps · cache 25.7k · $0)"]);
 	});
 });
 
@@ -203,8 +203,8 @@ test("exchange and session cards join their headline and metrics and wrap withou
 		waitingMs: 0,
 		cost: 0.0415,
 	};
-	const exchange = "⏱ 4m36s · 17:20:21 · glm-5.3-flash (in 256.1k · out 6.2k · $0.0415)";
-	const session = "📊 Session · 8 turns across 3 exchanges · glm-5.3-flash (in 256.1k · out 6.2k · $0.0415)";
+	const exchange = "⏱ 4m36s · 17:20:21 · glm-5.3-flash (in 256.1k · out 6.2k · 470 tps · $0.0415)";
+	const session = "📊 Session · 8 turns across 3 exchanges · glm-5.3-flash (in 256.1k · out 6.2k · 470 tps · $0.0415)";
 
 	withLocalClock(Date.UTC(2026, 8, 24, 10), timeZone, () => {
 		assert.deepEqual(renderRows(mounted, record, 120), [exchange]);
@@ -239,7 +239,7 @@ test("an exchange card puts waiting before total cost and omits folded metrics",
 	const rows = renderRows(mounted, record, 150);
 
 	assert.equal(rows.length, 1);
-	assert.match(rows[0], /old-model \(in 9.5k · out 234 · cache 67.4k \/ 1.2k written · waiting 500ms · \$0\.2346\)$/);
+	assert.match(rows[0], /old-model \(in 9.5k · out 234 · 18 tps · cache 67.4k \/ 1.2k written · waiting 500ms · \$0\.2346\)$/);
 	for (const metric of ["in 9.5k", "out 234", "cache 67.4k", "waiting 500ms", "$0.2346"]) {
 		assert.equal(rows[0].split(metric).length - 1, 1, `${metric} should appear once`);
 	}
@@ -254,7 +254,7 @@ test("a session card uses the same metrics without active, turn or tool detail",
 		index: 3,
 		waitingMs: 500,
 	};
-	assert.deepEqual(renderRows(mounted, record, 140), ["📊 Session · 1 turn across 3 exchanges · old-model (in 11 · out 7 · cache 3 · waiting 500ms · $0.00420)"]);
+	assert.deepEqual(renderRows(mounted, record, 140), ["📊 Session · 1 turn across 3 exchanges · old-model (in 11 · out 7 · 0.5 tps · cache 3 · waiting 500ms · $0.00420)"]);
 });
 
 test("the footer omits zero cost but keeps a positive cost", () => {
@@ -297,6 +297,7 @@ test("an exchange renders with only Pi-provided events and context", () => {
 
 	const rows = renderRows(mounted, mounted.entries[0].data);
 	assert.equal(rows.length, 1);
+	// Settled within the same millisecond: no model time, so no rate.
 	assert.match(rows[0], /^⏱ .* · pi-test-model \(in 11 · out 7 · cache 3 · \$0\.00420\)$/);
 	for (const expanded of [false, true]) {
 		const colors = [];

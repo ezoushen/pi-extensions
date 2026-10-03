@@ -73,9 +73,13 @@ number. The finish time uses the runtime default locale and local time zone in
 24-hour `HH:MM:SS` style, with the date when that local date is not today. Records
 saved by version 0.1.0 without `endedAt` omit the finish time. The session line keeps
 its turn and exchange counts and follows the same model and metrics layout. Metrics
-show input and output tokens, cache reads as `cache R` with `/ W written` when cache writes are
+show input and output tokens, output speed as `N tps`, cache reads as `cache R` with `/ W written` when cache writes are
 nonzero (or `cache W written` when there are writes but no reads), waiting time only
-when nonzero, and total cost at the end even when it is `$0`. Cards omit turns,
+when nonzero, and total cost at the end even when it is `$0`. Output speed is output tokens
+(thinking included) over model time: an exchange sums its turns' model time, which leaves
+out tool time; a session card uses wall time less tool and waiting time. It is omitted when
+there is no output or no model time, including for entries from older versions that lack
+the timing. `cardFields` chooses which of these fields cards show (see Settings). Cards omit turns,
 prompts, tools, thinking, and total-token details. Block titles carry individual
 timing and count details.
 
@@ -183,6 +187,21 @@ the display patch land on those private component classes rather than the classe
 used by the running Pi. Stage the built package files outside such a tree, or
 `npm pack` this package and install the tarball with
 `pi install npm:pi-focus-mode@file:/absolute/path/to/pi-focus-mode-0.1.0.tgz`.
+
+Set `cardFields` to the fields exchange and session cards show. The fields are
+`duration`, `finishTime`, `model`, `input`, `output`, `tps`, `cache`, `waiting`, and
+`cost`; all are shown by default. Cards keep that order whatever order the list uses, and
+a session card always keeps its session headline. Put it in `<agentDir>/focus-mode.json`
+or a trusted project's `.pi/focus-mode.json`, for example:
+
+```json
+{ "cardFields": ["duration", "model", "output", "tps", "cost"] }
+```
+
+`PI_FOCUS_MODE_CARD_FIELDS` overrides the files with a comma-separated list, such as
+`duration,tps,cost`. Unknown names are ignored with one warning; a list with no valid
+name shows every field. The setting is read when a session starts, so run `/reload` after
+changing it. It changes only how cards are drawn, so existing cards follow it too.
 
 ## Install and verify
 

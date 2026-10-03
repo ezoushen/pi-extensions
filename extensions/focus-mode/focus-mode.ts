@@ -74,6 +74,16 @@ const FOLD_KEYS = {
 } as const;
 const CURSOR_SETTING = { cursorMode: { default: false, env: "PI_FOCUS_MODE_CURSOR_MODE", parseEnv: (value: string) => value === "true" } } as const;
 const SUMMARY_SETTING = { summaryModel: { default: "", env: "PI_FOCUS_MODE_SUMMARY_MODEL" } } as const;
+/** Every field a card can show, in the order a card shows them. */
+const CARD_FIELDS = ["duration", "finishTime", "model", "input", "output", "tps", "cache", "waiting", "cost"] as const;
+type CardField = (typeof CARD_FIELDS)[number];
+const CARD_FIELDS_SETTING = {
+	cardFields: {
+		default: [...CARD_FIELDS] as unknown,
+		env: "PI_FOCUS_MODE_CARD_FIELDS",
+		parseEnv: (value: string): unknown => value.split(",").map((name) => name.trim()).filter(Boolean),
+	},
+} as const;
 
 interface TokenTotals {
 	input: number;
@@ -185,6 +195,24 @@ function fmtTokens(n: number): string {
 	return `${(n / 1_000_000).toFixed(2)}M`;
 }
 
+function fmtRate(perSecond: number): string {
+	return perSecond >= 10 ? `${Math.round(perSecond)}` : perSecond.toFixed(1);
+}
+
+/**
+ * Output tokens per second of model time. An exchange sums its turns' model time (tool
+ * time already excluded); a session card has no turns, so it uses wall time less tools
+ * and waiting.
+ */
+function outputPerSecond(data: ExchangeRecord): number | undefined {
+	// Entries written by older versions can lack turns or timing; those show no rate.
+	const modelMs = data.turns?.length
+		? data.turns.reduce((sum, turn) => sum + turn.modelMs, 0)
+		: data.durationMs - data.toolMs - data.waitingMs;
+	if (!(data.output > 0) || !(modelMs > 0)) return undefined;
+	return data.output / (modelMs / 1_000);
+}
+
 function fmtCost(cost: number): string {
 	if (!Number.isFinite(cost) || cost <= 0) return "$0";
 	return cost < 0.01 ? `$${cost.toFixed(5)}` : `$${cost.toFixed(4)}`;
@@ -273,6 +301,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 	let warnedAboutToolFold = false;
 	let warnedAboutThinkingFold = false;
 	let summaryScheduler: HeadlineScheduler | undefined;
+	let cardFields = new Set<CardField>(CARD_FIELDS);
 	let summarySession = 0;
 	let restoredEntries: FoldSessionEntry[] = [];
 	let sessionTotals = {
@@ -403,6 +432,20 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		else if (running && !inExchange) toolFold.beginExchange(exchangeIndex);
 	}
 
+	/** The fields cards show; unknown names are dropped with one warning, and a list with none valid shows every field. */
+	function resolveCardFields(ctx: ExtensionContext, session: number): Set<CardField> {
+		const value = resolveSettings("focus-mode", CARD_FIELDS_SETTING, {
+			cwd: ctx.cwd ?? process.cwd(), hasUI: ctx.hasUI, isProjectTrusted: () => ctx.isProjectTrusted?.() ?? false,
+		}, settingsRuntime).cardFields.value;
+		const names = Array.isArray(value) ? value.map(String) : [];
+		const known = names.filter((name): name is CardField => (CARD_FIELDS as readonly string[]).includes(name));
+		if (known.length !== names.length || !Array.isArray(value)) {
+			const unknown = Array.isArray(value) ? names.filter((name) => !known.includes(name as CardField)).join(", ") : JSON.stringify(value);
+			announce(ctx, `focus-mode: cardFields ignores ${unknown}; fields are ${CARD_FIELDS.join(", ")}`, "warning", `focus-mode:card-fields:${session}`);
+		}
+		return new Set(known.length > 0 ? known : CARD_FIELDS);
+	}
+
 	// ---- Transcript card ----
 
 	pi.registerEntryRenderer<ExchangeRecord>(ENTRY_TYPE, (entry, _options, theme) => {
@@ -420,18 +463,26 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			return box;
 		}
 
-		const isSession = data.kind === "session";
-		const finishTime = data.endedAt === undefined ? "" : ` · ${fmtLocalFinishTime(data.endedAt)}`;
-		const headline = isSession
-			? `📊 Session · ${plural(data.turnCount, "turn")} across ${plural(data.index, "exchange")}`
-			: `⏱ ${fmtDuration(data.durationMs)}${finishTime}`;
+		const show = (field: CardField) => cardFields.has(field);
+		const headline: string[] = [];
+		if (data.kind === "session") headline.push(`📊 Session · ${plural(data.turnCount, "turn")} across ${plural(data.index, "exchange")}`);
+		else {
+			if (show("duration")) headline.push(`⏱ ${fmtDuration(data.durationMs)}`);
+			if (show("finishTime") && data.endedAt !== undefined) headline.push(fmtLocalFinishTime(data.endedAt));
+		}
+		if (show("model")) headline.push(data.model);
 
-		const summary = [`in ${fmtTokens(data.input)}`, `out ${fmtTokens(data.output)}`];
-		const cache = fmtCacheUsage(data.cacheRead, data.cacheWrite);
+		const summary: string[] = [];
+		if (show("input")) summary.push(`in ${fmtTokens(data.input)}`);
+		if (show("output")) summary.push(`out ${fmtTokens(data.output)}`);
+		const rate = show("tps") ? outputPerSecond(data) : undefined;
+		if (rate !== undefined) summary.push(`${fmtRate(rate)} tps`);
+		const cache = show("cache") ? fmtCacheUsage(data.cacheRead, data.cacheWrite) : undefined;
 		if (cache) summary.push(cache);
-		if (data.waitingMs > 0) summary.push(`waiting ${fmtDuration(data.waitingMs)}`);
-		summary.push(fmtCost(data.cost));
-		box.addChild(new Text(dimText(`${headline} · ${data.model} (${summary.join(" · ")})`), 0, 0));
+		if (show("waiting") && data.waitingMs > 0) summary.push(`waiting ${fmtDuration(data.waitingMs)}`);
+		if (show("cost")) summary.push(fmtCost(data.cost));
+		const metrics = summary.length > 0 ? `(${summary.join(" · ")})` : "";
+		box.addChild(new Text(dimText([headline.join(" · "), metrics].filter(Boolean).join(" ")), 0, 0));
 
 		return box;
 	});
@@ -453,6 +504,7 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		const session = ++summarySession;
 		summaryScheduler?.dispose();
 		summaryScheduler = undefined;
+		cardFields = resolveCardFields(ctx, session);
 		const summaryValue = resolveSettings("focus-mode", SUMMARY_SETTING, {
 			cwd: ctx.cwd ?? process.cwd(), hasUI: ctx.hasUI, isProjectTrusted: () => ctx.isProjectTrusted?.() ?? false,
 		}, settingsRuntime).summaryModel.value;
