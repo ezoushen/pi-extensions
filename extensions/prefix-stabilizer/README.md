@@ -9,6 +9,15 @@ text changes during a session because one early changed token invalidates every 
 block after it. System messages later in the conversation, which Pi sends to models with
 `supportsMidConvoSystemMessages`, extend the cached prefix and do not warn.
 
+Drift is measured against the request **as sent**. Extension-section removals the
+extension already strips elsewhere never reach a model and cannot invalidate any
+cached block, so toggling or re-adding them is silent once those removals are
+recorded -- which is what keeps a background-task-notification cycle from repeatedly
+re-prefilling; trailing flips after the seeded prefix don't break it either. Only a
+change that reaches the model and alters the seeded prefix -- a real package/MCP
+server, rules/AGENTS.md, skill, cwd, or content edit -- emits the one-time
+re-prefill warning.
+
 On Pi 0.99, a prompt that an extension returns from `before_agent_start` replaces the
 prompt for typed-prompt runs only. Runs started by extension messages, such as
 background-task notifications, use Pi's own prompt, so the leading prompt switches and the

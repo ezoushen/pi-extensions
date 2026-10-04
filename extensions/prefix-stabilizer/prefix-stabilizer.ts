@@ -264,6 +264,43 @@ function systemText(payload: Record<string, unknown>): string {
 	return parts.join("\n").replace(/\r\n/g, "\n").replace(/[ \t]+$/gm, "");
 }
 
+/**
+ * Fingerprint the leading, prefix-seeding part of a request AS IT WILL BE SENT.
+ *
+ * With `messages`, walk the leading system messages until the first other
+ * message (exactly where the cached prefix ends) and record, per message, both
+ * its folded `.content` and its surviving (non-empty) `.sections`. Removed
+ * extension sections reach no model, so they cannot invalidate any cached block
+ * and are excluded; contentless ones are too. Without `messages`, fall back to
+ * `systemText(body)`. Anything appended after the first dynamic message extends
+ * the prefix rather than breaking it, so it is ignored here -- hence a warning
+ * fires only when the bytes that seed the cache actually change, never for a
+ * trailing flip or a bookkeeping toggle that nets back to the same survivor set.
+ */
+function requestFP(body: Record<string, unknown>, messages: any[] | undefined): string {
+	const sha = createHash("sha1");
+	if (Array.isArray(messages)) {
+		const parts: string[] = [];
+		for (const m of messages) {
+			if (!m || typeof m !== "object" || (m as any).role !== "system") break;
+			const c = (m as any).content;
+			const contentStr = typeof c === "string" ? c : Array.isArray(c) ? c.map((p: any) => p?.text ?? "").join("") : "";
+			const sec = (m as any).sections;
+			const kv: string[] = [];
+			if (typeof sec === "object" && sec)
+				for (const [k, v] of Object.entries(sec)) {
+					const s = String(v);
+					if (s.length) kv.push(`\u0000${k}:${s}`);
+				}
+			parts.push(`content:${contentStr}\nsections:${kv.sort().join("\n")}`);
+		}
+		sha.update(parts.join("\n"));
+	} else {
+		sha.update(systemText(body));
+	}
+	return sha.digest("hex").slice(0, 12);
+}
+
 /** Filler pi appends to its tool list; a relocated copy may leave it out. */
 const TOOLS_FILLER = "In addition to the tools above, you may have access to other custom tools depending on the project.";
 
@@ -466,6 +503,18 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 				n += r.n;
 			}
 		}
+		// Strip the extension-section removals before fingerprinting, so the
+		// fingerprint matches the request copy this hook returns and the server
+		// actually receives. Drift is then measured against the bytes that seed
+		// the prefix, not the raw transcript the extension already trims elsewhere.
+		const requestedMessages =
+			'messages' in payload
+				? keepExtensionSections((payload.messages as any[]) ?? [], droppedRemovals)
+			: undefined;
+		if (requestedMessages !== undefined && requestedMessages !== (payload as any).messages) {
+			out.messages = requestedMessages;
+			n += 1;
+		}
 		const ts = sortToolArray(payload.tools);
 		if (ts.changed) {
 			out.tools = ts.v;
@@ -479,8 +528,9 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 			log({ first_rewrite: true, replacements: n, roots: [...roots] });
 		}
 
-		// Fingerprint the NORMALISED prompt, so benign reordering never warns.
-		const fp = createHash("sha1").update(systemText(n ? out : payload)).digest("hex").slice(0, 12);
+		// Fingerprint the NORMALISED, request-as-sent prompt, so benign reordering
+		// and trailing flips never warn. See requestFP.
+		const fp = requestFP(out, requestedMessages);
 		if (fingerprint === null) {
 			fingerprint = fp;
 		} else if (fp !== fingerprint) {

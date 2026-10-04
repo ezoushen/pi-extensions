@@ -260,6 +260,21 @@ function runSequence(payloads) {
 	}
 }
 
+// Pre-seeded session_start records, routed through restore(), so before_provider_request
+// carries the droppedRemovals it would after a resume. Lets one prove that a removal already
+// known is stripped from the request *before* fingerprinting (the item-1 guarantee) while the
+// identical, un-recorded flip still warns.
+function runSequenceStarted(payloads, recorded) {
+	const home = mkdtempSync(join(tmpdir(), "pi-prefix-stabilizer-seq-start-"));
+	const environment = { ...process.env, HOME: home, PREFIX_STABILIZER_TEST_SESSION_START: JSON.stringify(recorded) };
+	delete environment.PI_CODING_AGENT_DIR;
+	try {
+		return JSON.parse(execFileSync(process.execPath, ["--experimental-strip-types", sequenceFixture, source], { cwd: home, env: environment, encoding: "utf8" }));
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+}
+
 test("tool order is normalized before fingerprinting and emits no drift warning", () => {
 	const alpha = { type: "function", function: { name: "alpha" } };
 	const zebra = { type: "function", function: { name: "zebra" } };
@@ -310,6 +325,35 @@ test("a changed leading system message still warns", () => {
 	]);
 	assert.equal(result.notifications.length, 1);
 	assert.match(result.notifications[0], /system prompt changed mid-session/);
+});
+
+// Drift is measured against the request as sent (item 1): a flip that only toggles which
+// OPTIONAL extension sections are present cannot invalidate any cached block, so it stays
+// silent once recorded -- while the same flip, left un-recorded, changes the leading
+// signature and warns. A genuine edit to a surviving section always warns exactly once.
+test("a recorded extension-section flip stays silent; the same flip warns when un-recorded; a real edit always warns", () => {
+	// `notes` carries real text, so removing it reaches the model and could break the cache
+	// unless the stabilizer already recorded and stripped that flip before fingerprinting. The
+	// flip is placed *before* the dynamic user message so it lands inside the seeded prefix,
+	// making the difference observable.
+	const notes = "<notes>X</notes>";
+	const base = {
+		messages: [
+			{ role: "system", content: "", sections: { preamble: "P", tools: "<tools>\n- read\n</tools>", skills: "<skills>\n- ttd\n</skills>", notes } },
+			{ role: "user", content: [{ type: "text", text: "go" }] },
+		],
+	};
+	const flip = { messages: [base.messages[0], { role: "system", content: "", sections: { notes: null }, timestamp: 7 }, base.messages[1]] };
+	const recorded = [{ type: "custom", customType: "pi-prefix-stabilizer", data: { droppedRemovals: [7] } }];
+
+	// Un-recorded: the leading signature loses `notes`, so drift fires once.
+	const unrecorded = runSequence([base, flip]);
+	assert.equal(unrecorded.notifications.length, 1);
+
+	// Recorded: keepExtensionSections strips the flip from the request before fingerprinting,
+	// so the surviving survivor set is unchanged -> no warning.
+	const started = runSequenceStarted([base, flip], recorded);
+	assert.deepEqual(started.notifications, []);
 });
 
 const agentStartFixture = join(repoRoot, "test", "fixtures", "run-prefix-stabilizer-agent-start.mjs");
