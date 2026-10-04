@@ -86,7 +86,7 @@ timing and count details.
 Tool time is the union of tool spans, not their sum, so parallel calls are not counted
 twice. Model time is estimated as turn wall time minus tool time. Output throughput is
 calculated per turn, while cumulative cost and token fields use Pi's reported usage.
-Run `/exstats` to append a cumulative session card. Exchange entries retain block
+Run `/sessionstats` to append a cumulative session card showing totals across every exchange so far. Exchange entries retain block
 durations, status, counts, and headlines outside model context. A model headline
 that arrives after its exchange settles is saved in a separate, unrendered
 `exchange-stats-headline` entry holding only the block id, headline and source, and
@@ -139,7 +139,7 @@ Uninstall `pi-exchange-stats` before installing `pi-focus-mode`; both packages
 must not be loaded together. The published `pi-exchange-stats@0.1.0` had no
 settings or environment variables, so no settings migration is needed. Existing
 sessions remain readable through their `exchange-stats` and
-`exchange-stats-headline` entries. The `/exstats` command and `exchange` status
+`exchange-stats-headline` entries. The `/sessionstats` command and `exchange` status
 key stay unchanged.
 
 ## Settings
@@ -218,7 +218,7 @@ final answer stays unmarked. Check that exchanges without a process or a trailin
 answer stay unfolded. Check that the exchange card uses one line when it fits and
 wraps without truncating numbers at narrower widths, with metrics in parentheses,
 cost last and no expanded detail. Open a process to see individual block timings
-and counts. Run `/exstats` and confirm the session card keeps its turn and exchange
+and counts. Run `/sessionstats` and confirm the session card keeps its turn and exchange
 counts, with metrics in parentheses and following the same metrics rules. To check
 parallel-tool accounting, run two overlapping tools and confirm their union is not
 larger than the exchange wall time.

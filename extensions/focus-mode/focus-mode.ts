@@ -81,7 +81,7 @@ const CARD_FIELDS_SETTING = {
 	cardFields: {
 		default: [...CARD_FIELDS] as unknown,
 		env: "PI_FOCUS_MODE_CARD_FIELDS",
-		parseEnv: (value: string): unknown => value.split(",").map((name) => name.trim()).filter(Boolean),
+		parseEnv: (value: string): string[] => value.split(",").map((name) => name.trim()).filter(Boolean),
 	},
 } as const;
 
@@ -394,7 +394,8 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 			for (let index = restoredEntries.length - 1; index >= 0; index--) {
 				const entry = restoredEntries[index];
 				if (entry.type !== "custom") continue;
-				const patch = entry.customType === HEADLINE_ENTRY_TYPE ? entry.data as unknown as ThinkingHeadlinePatch | undefined : undefined;
+				// SAFETY: an exchange-stats-headline entry always carries a ThinkingHeadlinePatch as data; TypeScript cannot map customType -> data shape, so reinterpret entry.data once.
+								const patch = entry.customType === HEADLINE_ENTRY_TYPE ? entry.data as unknown as ThinkingHeadlinePatch | undefined : undefined;
 				if (!correction && patch?.id === id) correction = patch;
 				if (entry.customType !== ENTRY_TYPE) continue;
 				const found = entry.data?.blocks?.find((block) => block.id === id);
@@ -532,7 +533,8 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 						if (patch) {
 							try {
 								pi.appendEntry<ThinkingHeadlinePatch>(HEADLINE_ENTRY_TYPE, patch);
-								restoredEntries.push({ type: "custom", customType: HEADLINE_ENTRY_TYPE, data: patch as unknown as ExchangeRecord });
+								// SAFETY: restore reads entry.data as a ThinkingHeadlinePatch, so persist it under the ExchangeRecord generic appendEntry<T>() requires; the object is really the headline patch.
+																restoredEntries.push({ type: "custom", customType: HEADLINE_ENTRY_TYPE, data: patch as unknown as ExchangeRecord });
 							} catch {
 								// See the agent_settled note on runtimes without entry persistence.
 							}
@@ -818,8 +820,8 @@ export function registerExchangeStats(pi: ExtensionAPI, toolComponent: typeof To
 		resetExchangeState();
 	});
 
-	pi.registerCommand("exstats", {
-		description: "Append a cumulative session timing card",
+	 pi.registerCommand("sessionstats", {
+		description: "Append a cumulative summary card of this session's totals",
 		handler: () => {
 			const record: ExchangeRecord = {
 				...sessionTotals,

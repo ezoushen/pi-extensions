@@ -27,7 +27,7 @@ function mount() {
 		fire("turn_end", { message });
 	};
 	const cards = () => entries.filter((entry) => entry.customType === "exchange-stats").map((entry) => entry.data);
-	return { fire, answer, cards, exstats: () => commands.get("exstats")("", ctx), close: () => handlers.get("session_shutdown")() };
+	return { fire, answer, cards, sessionstats: () => commands.get("sessionstats")("", ctx), close: () => handlers.get("session_shutdown")() };
 }
 
 const usage = (input, output, cost) => ({ input, output, reasoning: 0, cacheRead: 100, cacheWrite: 0, totalTokens: input + output + 100, cost: { total: cost } });
@@ -88,7 +88,7 @@ test("an exchange record and the session card carry the model time of its turns"
 		m.fire("agent_settled");
 		const [card] = m.cards();
 		assert.equal(card.modelMs, card.turns.reduce((sum, turn) => sum + turn.modelMs, 0));
-		m.exstats();
+		m.sessionstats();
 		const session = m.cards().find((entry) => entry.kind === "session");
 		assert.equal(session.modelMs, card.modelMs);
 	} finally { m.close(); }
