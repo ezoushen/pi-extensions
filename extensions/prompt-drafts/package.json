@@ -1,6 +1,6 @@
 {
   "name": "pi-prompt-drafts",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Ctrl+S drafts for pi's prompt editor: save a draft with a keypress and get it back when your next prompt is sent.",
   "type": "module",
   "main": "./prompt-drafts.js",

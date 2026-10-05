@@ -70,6 +70,11 @@ const packageRequirements = {
 		"`PI_PROMPT_DRAFTS_KEY`",
 		"never sent on its own",
 	],
+	"pi-image-thumbnails": [
+		"| `cols` | `10` | `PI_IMAGE_THUMBS_COLS` |",
+		"| `rows` | `4` | `PI_IMAGE_THUMBS_ROWS` |",
+		"no image is attached",
+	],
 };
 
 function filesUnder(root) {
@@ -158,7 +163,7 @@ test("packed tarballs and git-tracked source contain no private deployment ident
 test("every packed package documents its contract, settings, and unmet behavior", () => {
 	const { temp, packages } = packAll();
 	try {
-		assert.equal(packages.length, 6);
+		assert.equal(packages.length, 7);
 		for (const packed of packages) {
 			const readme = readFileSync(join(packed.root, "README.md"), "utf8");
 			assert.match(readme, /^## External contract$/m, packed.name);

@@ -41,8 +41,20 @@ Extension commands (including `/drafts` itself) and prompt-template or skill
 commands behave correctly on their own: extension commands never trigger a
 restore, and templates and skills are sent as prompts, so they do.
 
-The default key is `ctrl+s`, which is free in pi's main editor: pi only binds
-`ctrl+s` inside pickers and selectors. `app.message.followUp` (`alt+enter`)
+The default key is `ctrl+s`. pi also binds `ctrl+s` to `app.models.save`
+("save model selection"), but that binding only does anything inside the model
+pickers -- they match it directly, so both keep working: in the main editor
+`ctrl+s` saves a draft, and inside a picker it still saves the selection as
+default. pi prints a one-line shortcut-conflict diagnostic at startup anyway;
+silence it by rebinding the built-in in `<agent-dir>/keybindings.json`:
+
+```json
+{
+  "app.models.save": "ctrl+alt+m"
+}
+```
+
+`app.message.followUp` (`alt+enter`)
 remains pi's own way to queue a message that is *sent* when the current run
 ends; the drafts are only restored into the editor, never sent.
 

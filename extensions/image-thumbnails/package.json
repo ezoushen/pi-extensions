@@ -1,0 +1,37 @@
+{
+  "name": "pi-image-thumbnails",
+  "version": "0.1.0",
+  "description": "Image thumbnails for pi: paste a path, [Image #1], or markdown and it becomes a real image block on send plus an aspect-fill thumbnail in the prompt editor.",
+  "type": "module",
+  "main": "./image-thumbnails.js",
+  "exports": "./image-thumbnails.js",
+  "files": [
+    "image-thumbnails.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ezoushen/pi-extensions.git",
+    "directory": "extensions/image-thumbnails"
+  },
+  "homepage": "https://github.com/ezoushen/pi-extensions/tree/main/extensions/image-thumbnails#readme",
+  "bugs": {
+    "url": "https://github.com/ezoushen/pi-extensions/issues"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.87.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./image-thumbnails.js"
+    ]
+  }
+}
