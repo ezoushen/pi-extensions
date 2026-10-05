@@ -16,26 +16,17 @@ function isShortcutKey(value: unknown): value is ShortcutKey {
 		base !== undefined && (/^[a-z0-9]$/.test(base) || ["enter", "escape", "tab", "space", "backspace", "delete", "up", "down", "left", "right", "home", "end"].includes(base));
 }
 
-interface ContentPart {
-	type: string;
-	text?: string;
-}
-
-function messageText(content: string | ContentPart[]): string {
-	if (typeof content === "string") return content;
-	return content.flatMap((part) => (part.type === "text" ? [part.text ?? ""] : [])).join("");
-}
-
 /**
  * Ctrl+S stash for the prompt editor, in the style of Claude Code's message
  * queueing: press the stash key to set aside the text you are typing, keep
- * typing or wait, and get it back -- automatically once your next prompt is
- * sent, or with the same key at any time.
+ * typing or wait, and get it back -- automatically the moment you send your
+ * next prompt, or with the same key at any time.
  *
- * The stash is a small stack: each press with text in the editor pushes, each
- * press with an empty editor pops the most recent entry. A prompt the user
- * sends verbatim is dropped from the stack, so an auto-restore can never
- * duplicate something that was already submitted.
+ * The stash is a queue: each press with text in the editor pushes to the end,
+ * each restore hands back the oldest entry, so drafts come back in the order
+ * they were written. A prompt the user sends verbatim is dropped from the
+ * queue, so an auto-restore can never duplicate something that was already
+ * submitted.
  */
 export default function registerPromptStash(pi: ExtensionAPI, settingsRuntime: SettingsRuntime = {}): void {
 	const resolved = resolveSettings("pi-prompt-stash", KEY_SETTING, {
@@ -48,17 +39,17 @@ export default function registerPromptStash(pi: ExtensionAPI, settingsRuntime: S
 	const key: ShortcutKey = validKey ? configuredKey : DEFAULT_KEY;
 	let warnedAboutKey = false;
 
-	/** Stashed prompts, most recent last. In-memory per pi process. */
+	/** Stashed prompts, oldest first. In-memory per pi process. */
 	const stash: string[] = [];
 
 	const pop = (ctx: ExtensionContext): boolean => {
-		const text = stash.pop();
+		const text = stash.shift();
 		if (text === undefined) {
 			announce(ctx, "pi-prompt-stash: nothing stashed.", "info", "pi-prompt-stash:empty");
 			return false;
 		}
 		if (ctx.ui.getEditorText().trim()) {
-			stash.push(text);
+			stash.unshift(text);
 			announce(ctx, "pi-prompt-stash: the editor is not empty, so the stash was kept. Clear the editor and restore again.", "warning", "pi-prompt-stash:editor-busy");
 			return false;
 		}
@@ -77,37 +68,32 @@ export default function registerPromptStash(pi: ExtensionAPI, settingsRuntime: S
 		}
 	});
 
-	// Every accepted user prompt is the moment the stash comes back: the
-	// message the user just sent is their active prompt, so the stashed draft
-	// becomes the next one to review and submit. A sent prompt that matches a
-	// stash entry exactly is dropped instead -- it has been used, and leaving
-	// it stashed would make the auto-restore re-fill the editor with an
-	// already-submitted message. The editor normally reads empty here (pi
-	// clears it on submit), but if the just-sent text is still there we clear
-	// it; anything else typed in the meantime keeps the stash and gets a
-	// waiting notice.
-	pi.on("message_start", (event, ctx) => {
-		if (event.message.role !== "user") return;
-		const sent = messageText(event.message.content as string | ContentPart[]);
-		const index = stash.lastIndexOf(sent);
+	// The moment a prompt is sent is the moment the stash comes back: the
+	// sent message becomes the active prompt, so the stashed draft becomes the
+	// next one to review and submit. pi clears the editor before the input
+	// event dispatches, so the restore lands in an empty editor. A sent prompt
+	// that matches a stash entry exactly is dropped instead -- it has been
+	// used, and leaving it queued would make the restore re-fill the editor
+	// with an already-submitted message. The editor-occupied guard only fires
+	// when another extension filled it in an earlier input handler.
+	pi.on("input", (event, ctx) => {
+		const sent = event.text;
+		const index = stash.indexOf(sent);
 		if (index !== -1) stash.splice(index, 1);
 		if (stash.length === 0) return;
 
-		const editor = ctx.ui.getEditorText();
-		if (editor === sent) {
-			ctx.ui.setEditorText("");
-		} else if (editor.trim()) {
+		if (ctx.ui.getEditorText().trim()) {
 			announce(ctx, "pi-prompt-stash: a stashed prompt is waiting; press the stash key to restore it.", "info", "pi-prompt-stash:waiting");
 			return;
 		}
-		const text = stash.pop();
+		const text = stash.shift();
 		if (text === undefined) return;
 		ctx.ui.setEditorText(text);
 		announce(ctx, "pi-prompt-stash: stashed prompt restored to the editor; press enter to send it.", "info", "pi-prompt-stash:auto-restored");
 	});
 
 	pi.registerShortcut(key, {
-		description: "Stash the editor prompt (press again with an empty editor to restore; pops automatically when your next prompt is sent)",
+		description: "Stash the editor prompt (press again with an empty editor to restore; pops automatically when you send the next prompt)",
 		handler: (ctx) => {
 			const text = ctx.ui.getEditorText();
 			if (text.trim()) {

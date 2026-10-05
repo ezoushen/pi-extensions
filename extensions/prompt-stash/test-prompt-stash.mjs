@@ -102,7 +102,7 @@ test("whitespace-only editor text does not stash", async () => {
 	assert.match(h.lastNotification(), /nothing stashed/);
 });
 
-test("stash stacks and pops most-recent first", async () => {
+test("the stash is a queue: restores hand back the oldest entry first", async () => {
 	const h = createHarness({ editorText: "" });
 	registerPromptStash(h.pi, {});
 
@@ -112,38 +112,34 @@ test("stash stacks and pops most-recent first", async () => {
 	await h.press();
 
 	await h.press();
-	assert.equal(h.getEditorText(), "second");
+	assert.equal(h.getEditorText(), "first");
 	h.setEditorText("");
 	await h.press();
-	assert.equal(h.getEditorText(), "first");
+	assert.equal(h.getEditorText(), "second");
 });
+
+const sendInput = (h, text) => h.emit("input", { type: "input", text, source: "interactive" });
 
 test("sending any prompt auto-restores the stash into the editor", async () => {
 	const h = createHarness({ editorText: "draft" });
 	registerPromptStash(h.pi, {});
 
 	await h.press();
-	h.emit("message_start", {
-		type: "message_start",
-		message: { role: "user", content: "the next thing to do", timestamp: 0 },
-	});
+	sendInput(h, "the next thing to do");
 	assert.equal(h.getEditorText(), "draft");
 	assert.match(h.lastNotification(), /stashed prompt restored/);
 });
 
-// the editor normally reads empty at message_start (pi clears it on submit);
-// if the just-sent text is still there, it is cleared before the restore
-test("a submit that has not cleared the editor yet is cleared, then the stash pops", async () => {
+// pi clears the editor before the input event dispatches, so the restore
+// lands in the editor it just cleared
+test("the restore lands in the editor pi just cleared", async () => {
 	const h = createHarness({ editorText: "" });
 	registerPromptStash(h.pi, {});
 
 	h.setEditorText("draft");
 	await h.press();
-	h.setEditorText("the next thing to do");
-	h.emit("message_start", {
-		type: "message_start",
-		message: { role: "user", content: "the next thing to do", timestamp: 0 },
-	});
+	h.setEditorText("");
+	sendInput(h, "the next thing to do");
 	assert.equal(h.getEditorText(), "draft");
 });
 
@@ -153,10 +149,7 @@ test("the stash is kept when the editor has unrelated new text at send time", as
 
 	await h.press();
 	h.setEditorText("something new");
-	h.emit("message_start", {
-		type: "message_start",
-		message: { role: "user", content: "the next thing to do", timestamp: 0 },
-	});
+	sendInput(h, "the next thing to do");
 	assert.equal(h.getEditorText(), "something new");
 	assert.match(h.lastNotification(), /stashed prompt is waiting/);
 
@@ -165,35 +158,21 @@ test("the stash is kept when the editor has unrelated new text at send time", as
 	assert.equal(h.getEditorText(), "draft");
 });
 
-test("sending the stashed text verbatim drops it from the stash", async () => {
+test("sending the stashed text verbatim drops it from the queue", async () => {
 	const h = createHarness({ editorText: "" });
 	registerPromptStash(h.pi, {});
 
 	h.setEditorText("ship it");
 	await h.press();
-	h.emit("message_start", {
-		type: "message_start",
-		message: { role: "user", content: [{ type: "text", text: "ship it" }], timestamp: 0 },
-	});
+	sendInput(h, "ship it");
 
 	assert.equal(h.getEditorText(), "");
 	assert.doesNotMatch(h.lastNotification(), /restored/);
 
-	// assistant messages and different text leave the stash alone
+	// a different send still restores what is left
 	h.setEditorText("again");
 	await h.press();
-	h.emit("message_start", {
-		type: "message_start",
-		message: { role: "assistant", content: "again", timestamp: 0 },
-	});
-	assert.equal(h.getEditorText(), "");
-
-	// the stash survives both, so a later send restores it
-	h.setEditorText("");
-	h.emit("message_start", {
-		type: "message_start",
-		message: { role: "user", content: "something else", timestamp: 0 },
-	});
+	sendInput(h, "something else");
 	assert.equal(h.getEditorText(), "again");
 });
 
