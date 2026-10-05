@@ -68,6 +68,22 @@ export default function registerPromptStash(pi: ExtensionAPI, settingsRuntime: S
 		}
 	});
 
+	/** Shared restore core: pops the oldest entry into an empty editor. */
+	const restoreNext = (ctx: ExtensionContext, onBusy: "notify" | "skip"): boolean => {
+		if (stash.length === 0) return false;
+		if (ctx.ui.getEditorText().trim()) {
+			if (onBusy === "notify") {
+				announce(ctx, "pi-prompt-stash: a stashed prompt is waiting; press the stash key to restore it.", "info", "pi-prompt-stash:waiting");
+			}
+			return false;
+		}
+		const text = stash.shift();
+		if (text === undefined) return false;
+		ctx.ui.setEditorText(text);
+		announce(ctx, "pi-prompt-stash: stashed prompt restored to the editor; press enter to send it.", "info", "pi-prompt-stash:auto-restored");
+		return true;
+	};
+
 	// The moment a prompt is sent is the moment the stash comes back: the
 	// sent message becomes the active prompt, so the stashed draft becomes the
 	// next one to review and submit. pi clears the editor before the input
@@ -80,16 +96,22 @@ export default function registerPromptStash(pi: ExtensionAPI, settingsRuntime: S
 		const sent = event.text;
 		const index = stash.indexOf(sent);
 		if (index !== -1) stash.splice(index, 1);
-		if (stash.length === 0) return;
+		restoreNext(ctx, "notify");
+	});
 
-		if (ctx.ui.getEditorText().trim()) {
-			announce(ctx, "pi-prompt-stash: a stashed prompt is waiting; press the stash key to restore it.", "info", "pi-prompt-stash:waiting");
-			return;
-		}
-		const text = stash.shift();
-		if (text === undefined) return;
-		ctx.ui.setEditorText(text);
-		announce(ctx, "pi-prompt-stash: stashed prompt restored to the editor; press enter to send it.", "info", "pi-prompt-stash:auto-restored");
+	// Built-in slash commands are intercepted by pi's editor before any event
+	// fires, so they never reach the input event. pi does emit selection events
+	// when a config picker completes, and its editor reads empty then -- the
+	// same moment the stash is due back. Only explicit picks restore: ctrl+p
+	// cycling ("cycle") and session restore must not surface a stash. An
+	// occupied editor skips silently -- a selection is not a send worth
+	// interrupting. Extension commands (including /stash) run before the input
+	// event inside session.prompt, so they never trigger a restore either.
+	pi.on("model_select", (event, ctx) => {
+		if (event.source === "set") restoreNext(ctx, "skip");
+	});
+	pi.on("thinking_level_select", (_event, ctx) => {
+		restoreNext(ctx, "skip");
 	});
 
 	pi.registerShortcut(key, {

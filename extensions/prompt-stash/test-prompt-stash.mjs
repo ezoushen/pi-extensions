@@ -196,6 +196,62 @@ test("/stash restores and /stash clear discards", async () => {
 	assert.match(h.lastNotification(), /usage/);
 });
 
+test("an explicit config selection (/model, /thinking) restores the stash", async () => {
+	const h = createHarness({ editorText: "" });
+	registerPromptStash(h.pi, {});
+
+	h.setEditorText("draft");
+	await h.press();
+	h.emit("model_select", { type: "model_select", model: {}, previousModel: {}, source: "set" });
+	assert.equal(h.getEditorText(), "draft");
+	assert.match(h.lastNotification(), /stashed prompt restored/);
+
+	// thinking_level_select has no source field; it always restores
+	h.setEditorText("");
+	h.setEditorText("second draft");
+	await h.press();
+	h.emit("thinking_level_select", { type: "thinking_level_select", level: "high", previousLevel: "medium" });
+	assert.equal(h.getEditorText(), "second draft");
+});
+
+test("ctrl+p cycling and session restore do not surface the stash", async () => {
+	const h = createHarness({ editorText: "" });
+	registerPromptStash(h.pi, {});
+
+	h.setEditorText("draft");
+	await h.press();
+	h.emit("model_select", { type: "model_select", model: {}, previousModel: {}, source: "cycle" });
+	h.emit("model_select", { type: "model_select", model: {}, previousModel: {}, source: "restore" });
+	assert.equal(h.getEditorText(), "");
+
+	// ...and the stash is intact for the next send
+	sendInput(h, "anything");
+	assert.equal(h.getEditorText(), "draft");
+});
+
+test("a config selection with a busy editor skips the restore silently", async () => {
+	const h = createHarness({ editorText: "" });
+	registerPromptStash(h.pi, {});
+
+	h.setEditorText("draft");
+	await h.press();
+	h.setEditorText("typing something");
+	h.emit("model_select", { type: "model_select", model: {}, previousModel: {}, source: "set" });
+	assert.equal(h.getEditorText(), "typing something");
+	assert.doesNotMatch(h.lastNotification(), /waiting|restored/);
+});
+
+test("/stash itself never triggers a restore", async () => {
+	const h = createHarness({ editorText: "" });
+	registerPromptStash(h.pi, {});
+
+	h.setEditorText("kept");
+	await h.press();
+	await h.runCommand("stash", "clear");
+	assert.equal(h.getEditorText(), "");
+	assert.match(h.lastNotification(), /discarded 1 stashed prompt/);
+});
+
 test("key is configurable via the package config file", () => {
 	const h = withConfigFile({ key: "ctrl+alt+p" }, (runtime) => {
 		const harness = createHarness();

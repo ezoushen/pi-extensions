@@ -31,6 +31,16 @@ A stashed prompt that you send verbatim anyway is dropped from the queue
 (matched exactly against the submitted text), so the auto-restore can never
 refill the editor with an already-submitted message.
 
+Built-in slash commands are intercepted by pi's editor and never reach the
+input event, so they cannot trigger the restore directly. The two config
+selectors are covered through their own events: completing `/model` (or the
+scoped-models picker) and `/thinking` restores the stash -- but only for an
+explicit pick, so `ctrl+p` model cycling and session restores never surface a
+stash, and a selection with text still in the editor is skipped silently.
+Extension commands (including `/stash` itself) and prompt-template or skill
+commands behave correctly on their own: extension commands never trigger a
+restore, and templates and skills are sent as prompts, so they do.
+
 The default key is `ctrl+s`, which is free in pi's main editor: pi only binds
 `ctrl+s` inside pickers and selectors. `app.message.followUp` (`alt+enter`)
 remains pi's own way to queue a message that is *sent* when the current run
@@ -68,6 +78,8 @@ Valid modifiers are `ctrl`, `alt`, `shift`, and `super`. Valid named keys are
 An invalid key uses `ctrl+s` and shows one warning. A restore with a non-empty
 editor keeps the stash and says so instead of overwriting your text. Whitespace
 only editor text counts as empty. Pressing the key with an empty editor and an
-empty stack says so and changes nothing. Nothing is restored after a send if
-Pi's editor was not available to the extension; the stash survives and a later
-restore still works.
+empty queue says so and changes nothing. One-shot built-in commands that do not
+end in a selection -- `/new`, `/export`, `/compact`, and their kin -- do not
+surface the stash; restore it with the key or `/stash` when you want it.
+Nothing is restored after a send if Pi's editor was not available to the
+extension; the stash survives and a later restore still works.
