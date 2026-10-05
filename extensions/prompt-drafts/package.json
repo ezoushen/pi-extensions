@@ -1,12 +1,12 @@
 {
-  "name": "pi-prompt-stash",
+  "name": "pi-prompt-drafts",
   "version": "0.1.0",
-  "description": "Ctrl+S stash for pi's prompt editor: set a draft aside and get it back when the run ends.",
+  "description": "Ctrl+S drafts for pi's prompt editor: save a draft with a keypress and get it back when your next prompt is sent.",
   "type": "module",
-  "main": "./prompt-stash.js",
-  "exports": "./prompt-stash.js",
+  "main": "./prompt-drafts.js",
+  "exports": "./prompt-drafts.js",
   "files": [
-    "prompt-stash.js",
+    "prompt-drafts.js",
     "README.md",
     "LICENSE"
   ],
@@ -17,9 +17,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ezoushen/pi-extensions.git",
-    "directory": "extensions/prompt-stash"
+    "directory": "extensions/prompt-drafts"
   },
-  "homepage": "https://github.com/ezoushen/pi-extensions/tree/main/extensions/prompt-stash#readme",
+  "homepage": "https://github.com/ezoushen/pi-extensions/tree/main/extensions/prompt-drafts#readme",
   "bugs": {
     "url": "https://github.com/ezoushen/pi-extensions/issues"
   },
@@ -31,7 +31,7 @@
   },
   "pi": {
     "extensions": [
-      "./prompt-stash.js"
+      "./prompt-drafts.js"
     ]
   }
 }

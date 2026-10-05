@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import registerPromptStash from "./prompt-stash.ts";
+import registerPromptDrafts from "./prompt-drafts.ts";
 
 function createHarness({ editorText = "" } = {}) {
 	const shortcuts = new Map();
@@ -51,13 +51,14 @@ function createHarness({ editorText = "" } = {}) {
 	const press = (key = "ctrl+s") => shortcuts.get(key)?.handler(ctx);
 	const runCommand = (name, args = "") => commands.get(name)?.handler(args, ctx);
 	const lastNotification = () => notifications.at(-1)?.message ?? "";
+	const sendInput = (text) => emit("input", { type: "input", text, source: "interactive" });
 
-	return { pi, ctx, shortcuts, commands, notifications, calls, emit, press, runCommand, lastNotification, getEditorText: () => currentText, setEditorText: (text) => { currentText = text; } };
+	return { pi, ctx, shortcuts, commands, notifications, calls, emit, press, runCommand, sendInput, lastNotification, getEditorText: () => currentText, setEditorText: (text) => { currentText = text; } };
 }
 
 function withConfigFile(content, run) {
-	const dir = mkdtempSync(join(tmpdir(), "pi-prompt-stash-"));
-	const file = join(dir, "pi-prompt-stash.json");
+	const dir = mkdtempSync(join(tmpdir(), "pi-prompt-drafts-"));
+	const file = join(dir, "pi-prompt-drafts.json");
 	if (content !== undefined) writeFileSync(file, JSON.stringify(content));
 	try {
 		return run({ agentDir: dir });
@@ -66,45 +67,45 @@ function withConfigFile(content, run) {
 	}
 }
 
-test("default key is ctrl+s and stashing clears the editor", async () => {
+test("default key is ctrl+s and saving clears the editor", async () => {
 	const h = createHarness({ editorText: "hello world" });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
 	assert.ok(h.shortcuts.has("ctrl+s"));
 
 	await h.press();
 	assert.equal(h.getEditorText(), "");
-	assert.match(h.lastNotification(), /prompt stashed/);
+	assert.match(h.lastNotification(), /draft saved/);
 });
 
-test("second press restores the stashed prompt manually", async () => {
+test("second press restores the saved draft manually", async () => {
 	const h = createHarness({ editorText: "hello world" });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
 
 	await h.press();
 	await h.press();
 	assert.equal(h.getEditorText(), "hello world");
-	assert.match(h.lastNotification(), /prompt restored/);
+	assert.match(h.lastNotification(), /draft restored/);
 
-	// with the restored text back in the editor, the key stashes again;
-	// "nothing stashed" needs an empty editor
+	// with the restored text back in the editor, the key saves again;
+	// "no drafts" needs an empty editor
 	h.setEditorText("");
 	await h.press();
 	assert.equal(h.getEditorText(), "");
-	assert.match(h.lastNotification(), /nothing stashed/);
+	assert.match(h.lastNotification(), /no drafts/);
 });
 
-test("whitespace-only editor text does not stash", async () => {
+test("whitespace-only editor text is not saved", async () => {
 	const h = createHarness({ editorText: "   \n  " });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
 
 	await h.press();
 	assert.equal(h.getEditorText(), "   \n  ");
-	assert.match(h.lastNotification(), /nothing stashed/);
+	assert.match(h.lastNotification(), /no drafts/);
 });
 
-test("the stash is a queue: restores hand back the oldest entry first", async () => {
+test("the drafts are a queue: restores hand back the oldest entry first", async () => {
 	const h = createHarness({ editorText: "" });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
 
 	h.setEditorText("first");
 	await h.press();
@@ -118,53 +119,51 @@ test("the stash is a queue: restores hand back the oldest entry first", async ()
 	assert.equal(h.getEditorText(), "second");
 });
 
-const sendInput = (h, text) => h.emit("input", { type: "input", text, source: "interactive" });
-
-test("sending any prompt auto-restores the stash into the editor", async () => {
+test("sending any prompt auto-restores the draft into the editor", async () => {
 	const h = createHarness({ editorText: "draft" });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
 
 	await h.press();
-	sendInput(h, "the next thing to do");
+	h.sendInput("the next thing to do");
 	assert.equal(h.getEditorText(), "draft");
-	assert.match(h.lastNotification(), /stashed prompt restored/);
+	assert.match(h.lastNotification(), /draft restored/);
 });
 
 // pi clears the editor before the input event dispatches, so the restore
 // lands in the editor it just cleared
 test("the restore lands in the editor pi just cleared", async () => {
 	const h = createHarness({ editorText: "" });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
 
 	h.setEditorText("draft");
 	await h.press();
 	h.setEditorText("");
-	sendInput(h, "the next thing to do");
+	h.sendInput("the next thing to do");
 	assert.equal(h.getEditorText(), "draft");
 });
 
-test("the stash is kept when the editor has unrelated new text at send time", async () => {
+test("the draft is kept when the editor has unrelated new text at send time", async () => {
 	const h = createHarness({ editorText: "draft" });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
 
 	await h.press();
 	h.setEditorText("something new");
-	sendInput(h, "the next thing to do");
+	h.sendInput("the next thing to do");
 	assert.equal(h.getEditorText(), "something new");
-	assert.match(h.lastNotification(), /stashed prompt is waiting/);
+	assert.match(h.lastNotification(), /saved draft is waiting/);
 
 	h.setEditorText("");
 	await h.press();
 	assert.equal(h.getEditorText(), "draft");
 });
 
-test("sending the stashed text verbatim drops it from the queue", async () => {
+test("sending the saved draft verbatim drops it from the queue", async () => {
 	const h = createHarness({ editorText: "" });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
 
 	h.setEditorText("ship it");
 	await h.press();
-	sendInput(h, "ship it");
+	h.sendInput("ship it");
 
 	assert.equal(h.getEditorText(), "");
 	assert.doesNotMatch(h.lastNotification(), /restored/);
@@ -172,39 +171,19 @@ test("sending the stashed text verbatim drops it from the queue", async () => {
 	// a different send still restores what is left
 	h.setEditorText("again");
 	await h.press();
-	sendInput(h, "something else");
+	h.sendInput("something else");
 	assert.equal(h.getEditorText(), "again");
 });
 
-test("/stash restores and /stash clear discards", async () => {
+test("an explicit config selection (/model, /thinking) restores the draft", async () => {
 	const h = createHarness({ editorText: "" });
-	registerPromptStash(h.pi, {});
-
-	await h.runCommand("stash");
-	assert.match(h.lastNotification(), /nothing stashed/);
-
-	h.setEditorText("kept");
-	await h.press();
-	await h.runCommand("stash", "clear");
-	assert.match(h.lastNotification(), /discarded 1 stashed prompt/);
-
-	await h.runCommand("stash");
-	assert.equal(h.getEditorText(), "");
-	assert.match(h.lastNotification(), /nothing stashed/);
-
-	await h.runCommand("stash", "bogus");
-	assert.match(h.lastNotification(), /usage/);
-});
-
-test("an explicit config selection (/model, /thinking) restores the stash", async () => {
-	const h = createHarness({ editorText: "" });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
 
 	h.setEditorText("draft");
 	await h.press();
 	h.emit("model_select", { type: "model_select", model: {}, previousModel: {}, source: "set" });
 	assert.equal(h.getEditorText(), "draft");
-	assert.match(h.lastNotification(), /stashed prompt restored/);
+	assert.match(h.lastNotification(), /draft restored/);
 
 	// thinking_level_select has no source field; it always restores
 	h.setEditorText("");
@@ -214,9 +193,9 @@ test("an explicit config selection (/model, /thinking) restores the stash", asyn
 	assert.equal(h.getEditorText(), "second draft");
 });
 
-test("ctrl+p cycling and session restore do not surface the stash", async () => {
+test("ctrl+p cycling and session restore do not surface the draft", async () => {
 	const h = createHarness({ editorText: "" });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
 
 	h.setEditorText("draft");
 	await h.press();
@@ -224,14 +203,14 @@ test("ctrl+p cycling and session restore do not surface the stash", async () => 
 	h.emit("model_select", { type: "model_select", model: {}, previousModel: {}, source: "restore" });
 	assert.equal(h.getEditorText(), "");
 
-	// ...and the stash is intact for the next send
-	sendInput(h, "anything");
+	// ...and the draft is intact for the next send
+	h.sendInput("anything");
 	assert.equal(h.getEditorText(), "draft");
 });
 
 test("a config selection with a busy editor skips the restore silently", async () => {
 	const h = createHarness({ editorText: "" });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
 
 	h.setEditorText("draft");
 	await h.press();
@@ -241,21 +220,41 @@ test("a config selection with a busy editor skips the restore silently", async (
 	assert.doesNotMatch(h.lastNotification(), /waiting|restored/);
 });
 
-test("/stash itself never triggers a restore", async () => {
+test("/drafts restores and /drafts clear discards", async () => {
 	const h = createHarness({ editorText: "" });
-	registerPromptStash(h.pi, {});
+	registerPromptDrafts(h.pi, {});
+
+	await h.runCommand("drafts");
+	assert.match(h.lastNotification(), /no drafts/);
 
 	h.setEditorText("kept");
 	await h.press();
-	await h.runCommand("stash", "clear");
+	await h.runCommand("drafts", "clear");
+	assert.match(h.lastNotification(), /discarded 1 draft/);
+
+	await h.runCommand("drafts");
 	assert.equal(h.getEditorText(), "");
-	assert.match(h.lastNotification(), /discarded 1 stashed prompt/);
+	assert.match(h.lastNotification(), /no drafts/);
+
+	await h.runCommand("drafts", "bogus");
+	assert.match(h.lastNotification(), /usage/);
+});
+
+test("/drafts itself never triggers a restore", async () => {
+	const h = createHarness({ editorText: "" });
+	registerPromptDrafts(h.pi, {});
+
+	h.setEditorText("kept");
+	await h.press();
+	await h.runCommand("drafts", "clear");
+	assert.equal(h.getEditorText(), "");
+	assert.match(h.lastNotification(), /discarded 1 draft/);
 });
 
 test("key is configurable via the package config file", () => {
 	const h = withConfigFile({ key: "ctrl+alt+p" }, (runtime) => {
 		const harness = createHarness();
-		registerPromptStash(harness.pi, runtime);
+		registerPromptDrafts(harness.pi, runtime);
 		return harness;
 	});
 	assert.ok(h.shortcuts.has("ctrl+alt+p"));
@@ -265,7 +264,7 @@ test("key is configurable via the package config file", () => {
 test("an invalid configured key falls back to ctrl+s", () => {
 	const h = withConfigFile({ key: "not-a-key" }, (runtime) => {
 		const harness = createHarness();
-		registerPromptStash(harness.pi, runtime);
+		registerPromptDrafts(harness.pi, runtime);
 		return harness;
 	});
 	assert.ok(h.shortcuts.has("ctrl+s"));
@@ -277,7 +276,7 @@ test("an invalid configured key falls back to ctrl+s", () => {
 test("the environment variable wins over the config file", () => {
 	const h = withConfigFile({ key: "ctrl+alt+p" }, (runtime) => {
 		const harness = createHarness();
-		registerPromptStash(harness.pi, { ...runtime, environment: { PI_PROMPT_STASH_KEY: "ctrl+9" } });
+		registerPromptDrafts(harness.pi, { ...runtime, environment: { PI_PROMPT_DRAFTS_KEY: "ctrl+9" } });
 		return harness;
 	});
 	assert.ok(h.shortcuts.has("ctrl+9"));

@@ -65,9 +65,9 @@ const packageRequirements = {
 		"`PI_INTERRUPT_STEER_KEY`",
 		"kitty keyboard protocol",
 	],
-	"pi-prompt-stash": [
+	"pi-prompt-drafts": [
 		"| `key` | `ctrl+s` |",
-		"`PI_PROMPT_STASH_KEY`",
+		"`PI_PROMPT_DRAFTS_KEY`",
 		"never sent on its own",
 	],
 };
