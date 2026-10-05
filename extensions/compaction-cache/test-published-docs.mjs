@@ -65,6 +65,11 @@ const packageRequirements = {
 		"`PI_INTERRUPT_STEER_KEY`",
 		"kitty keyboard protocol",
 	],
+	"pi-prompt-stash": [
+		"| `key` | `ctrl+s` |",
+		"`PI_PROMPT_STASH_KEY`",
+		"never sent on its own",
+	],
 };
 
 function filesUnder(root) {
@@ -102,11 +107,16 @@ function packAll() {
 	const temp = mkdtempSync(join(tmpdir(), "pi-extensions-published-docs-"));
 	const packages = [];
 	for (const packageRoot of packageRoots) {
-		const packed = JSON.parse(
-			execFileSync("npm", ["pack", "--json", "--pack-destination", temp, packageRoot], {
-				encoding: "utf8",
-			}),
-		)[0];
+		let packed;
+		try {
+			packed = JSON.parse(
+				execFileSync("npm", ["pack", "--json", "--pack-destination", temp, packageRoot], {
+					encoding: "utf8",
+				}),
+			)[0];
+		} catch (error) {
+			throw new Error(`npm pack failed for ${packageRoot}: ${error instanceof Error ? error.message : String(error)}`);
+		}
 		const archive = join(temp, packed.filename);
 		const extracted = join(temp, basename(packed.filename, ".tgz"));
 		execFileSync("mkdir", [extracted]);
@@ -148,7 +158,7 @@ test("packed tarballs and git-tracked source contain no private deployment ident
 test("every packed package documents its contract, settings, and unmet behavior", () => {
 	const { temp, packages } = packAll();
 	try {
-		assert.equal(packages.length, 5);
+		assert.equal(packages.length, 6);
 		for (const packed of packages) {
 			const readme = readFileSync(join(packed.root, "README.md"), "utf8");
 			assert.match(readme, /^## External contract$/m, packed.name);

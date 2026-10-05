@@ -1,0 +1,37 @@
+{
+  "name": "pi-prompt-stash",
+  "version": "0.1.0",
+  "description": "Ctrl+S stash for pi's prompt editor: set a draft aside and get it back when the run ends.",
+  "type": "module",
+  "main": "./prompt-stash.js",
+  "exports": "./prompt-stash.js",
+  "files": [
+    "prompt-stash.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ezoushen/pi-extensions.git",
+    "directory": "extensions/prompt-stash"
+  },
+  "homepage": "https://github.com/ezoushen/pi-extensions/tree/main/extensions/prompt-stash#readme",
+  "bugs": {
+    "url": "https://github.com/ezoushen/pi-extensions/issues"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./prompt-stash.js"
+    ]
+  }
+}

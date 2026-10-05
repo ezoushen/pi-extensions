@@ -82,7 +82,10 @@ const CLAUDE_MEM_SETTINGS_DESCRIPTION = "claude-mem's own settings (CLAUDE_MEM_W
  * dependency. Never throws: an absent or malformed file just means nothing
  * was discovered, same as F1's rule for our own settings files.
  */
-function readClaudeMemSetting(key: string): unknown {
+/** A raw JSON value out of claude-mem's settings file; callers narrow per key. */
+type ClaudeMemSettingValue = string | number | boolean | null | ClaudeMemSettingValue[] | { [key: string]: ClaudeMemSettingValue };
+
+function readClaudeMemSetting(key: string): ClaudeMemSettingValue | undefined {
 	const dir = process.env.CLAUDE_MEM_DATA_DIR || join(homedir(), ".claude-mem");
 	try {
 		const raw = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as Record<string, unknown>;
@@ -201,6 +204,8 @@ function withSessionOverrides(
 	overrides: Partial<SessionOverrideValues>,
 ): EffectiveSettings {
 	const effective = { ...settings } as EffectiveSettings;
+	// SAFETY: `effective` and `overrides` are keyed by the same SETTABLE_SETTINGS
+	// names; the record view only exists so the loop can write those keys.
 	const values = effective as unknown as Record<string, unknown>;
 	for (const key of SETTABLE_SETTINGS) {
 		const value = overrides[key];

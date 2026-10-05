@@ -1,9 +1,10 @@
 # pi-extensions
 
-Five extensions for the [pi coding agent](https://pi.dev), published from one repository.
+Six extensions for the [pi coding agent](https://pi.dev), published from one
+repository.
 
-Three help long-running sessions reuse context. The other two help you steer a run
-and see what it cost.
+Three help long-running sessions reuse context. The other three help you steer
+a run, see what it cost, and keep a draft prompt safe.
 
 | package | what it does |
 |---|---|
@@ -12,6 +13,7 @@ and see what it cost.
 | [`pi-cmem`](extensions/cmem) | Bridges pi to a [claude-mem](https://github.com/thedotmack/claude-mem) worker over its HTTP API, so pi sessions share one memory namespace with other agents working in the same repository. |
 | [`pi-focus-mode`](extensions/focus-mode) | Keeps the transcript focused by folding thinking and tool calls into progress lines and block titles, with exchange stats in the status line and summary card. |
 | [`pi-interrupt-steer`](extensions/interrupt-steer) | Interrupts a running turn and sends the editor text as one new user message. |
+| [`pi-prompt-stash`](extensions/prompt-stash) | Ctrl+S stash for the prompt editor: set a draft aside and get it back when the run ends, or with the same key. |
 
 ## Install
 
@@ -21,6 +23,7 @@ pi install npm:pi-compaction-cache
 pi install npm:pi-cmem
 pi install npm:pi-focus-mode
 pi install npm:pi-interrupt-steer
+pi install npm:pi-prompt-stash
 ```
 
 Each package is independent. Install only what you want.
@@ -58,6 +61,7 @@ package name:
 | `pi-cmem` | `pi-cmem.json` |
 | `pi-focus-mode` | `focus-mode.json` |
 | `pi-interrupt-steer` | `pi-interrupt-steer.json` |
+| `pi-prompt-stash` | `pi-prompt-stash.json` |
 
 `pi-focus-mode` is the exception to step 4: its fold keys and `cursorMode` come only
 from the file in your pi agent directory and their environment variables. Only

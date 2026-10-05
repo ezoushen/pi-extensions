@@ -18,9 +18,11 @@
  * caller-owned de-dup), and the stderr path applies its own guard on top.
  */
 
+type AnnounceLevel = "info" | "warning" | "error";
+
 export interface AnnounceContext {
 	hasUI?: boolean;
-	ui?: { notify?: (message: string, level?: string) => void };
+	ui?: { notify?: (message: string, level?: AnnounceLevel) => void };
 }
 
 /** Reasons already printed to stderr in this process. */
@@ -34,7 +36,7 @@ const stderrAnnounced = new Set<string>();
 export function announce(
 	ctx: AnnounceContext | undefined,
 	message: string,
-	level?: string,
+	level?: AnnounceLevel,
 	reason: string = message,
 ): void {
 	if (ctx?.hasUI === false) {
