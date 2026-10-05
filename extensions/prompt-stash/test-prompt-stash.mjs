@@ -118,23 +118,45 @@ test("stash stacks and pops most-recent first", async () => {
 	assert.equal(h.getEditorText(), "first");
 });
 
-test("agent_end auto-restores when the editor is empty", async () => {
+test("sending any prompt auto-restores the stash into the editor", async () => {
 	const h = createHarness({ editorText: "draft" });
 	registerPromptStash(h.pi, {});
 
 	await h.press();
-	h.emit("agent_end", { type: "agent_end", messages: [] });
+	h.emit("message_start", {
+		type: "message_start",
+		message: { role: "user", content: "the next thing to do", timestamp: 0 },
+	});
 	assert.equal(h.getEditorText(), "draft");
 	assert.match(h.lastNotification(), /stashed prompt restored/);
 });
 
-test("agent_end keeps the stash when the editor has new text", async () => {
+// the editor normally reads empty at message_start (pi clears it on submit);
+// if the just-sent text is still there, it is cleared before the restore
+test("a submit that has not cleared the editor yet is cleared, then the stash pops", async () => {
+	const h = createHarness({ editorText: "" });
+	registerPromptStash(h.pi, {});
+
+	h.setEditorText("draft");
+	await h.press();
+	h.setEditorText("the next thing to do");
+	h.emit("message_start", {
+		type: "message_start",
+		message: { role: "user", content: "the next thing to do", timestamp: 0 },
+	});
+	assert.equal(h.getEditorText(), "draft");
+});
+
+test("the stash is kept when the editor has unrelated new text at send time", async () => {
 	const h = createHarness({ editorText: "draft" });
 	registerPromptStash(h.pi, {});
 
 	await h.press();
 	h.setEditorText("something new");
-	h.emit("agent_end", { type: "agent_end", messages: [] });
+	h.emit("message_start", {
+		type: "message_start",
+		message: { role: "user", content: "the next thing to do", timestamp: 0 },
+	});
 	assert.equal(h.getEditorText(), "something new");
 	assert.match(h.lastNotification(), /stashed prompt is waiting/);
 
@@ -153,7 +175,6 @@ test("sending the stashed text verbatim drops it from the stash", async () => {
 		type: "message_start",
 		message: { role: "user", content: [{ type: "text", text: "ship it" }], timestamp: 0 },
 	});
-	h.emit("agent_end", { type: "agent_end", messages: [] });
 
 	assert.equal(h.getEditorText(), "");
 	assert.doesNotMatch(h.lastNotification(), /restored/);
@@ -165,7 +186,14 @@ test("sending the stashed text verbatim drops it from the stash", async () => {
 		type: "message_start",
 		message: { role: "assistant", content: "again", timestamp: 0 },
 	});
-	h.emit("agent_end", { type: "agent_end", messages: [] });
+	assert.equal(h.getEditorText(), "");
+
+	// the stash survives both, so a later send restores it
+	h.setEditorText("");
+	h.emit("message_start", {
+		type: "message_start",
+		message: { role: "user", content: "something else", timestamp: 0 },
+	});
 	assert.equal(h.getEditorText(), "again");
 });
 

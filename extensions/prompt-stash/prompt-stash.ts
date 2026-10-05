@@ -29,8 +29,8 @@ function messageText(content: string | ContentPart[]): string {
 /**
  * Ctrl+S stash for the prompt editor, in the style of Claude Code's message
  * queueing: press the stash key to set aside the text you are typing, keep
- * typing or wait, and get it back -- automatically when the current run ends,
- * or with the same key at any time.
+ * typing or wait, and get it back -- automatically once your next prompt is
+ * sent, or with the same key at any time.
  *
  * The stash is a small stack: each press with text in the editor pushes, each
  * press with an empty editor pops the most recent entry. A prompt the user
@@ -77,19 +77,26 @@ export default function registerPromptStash(pi: ExtensionAPI, settingsRuntime: S
 		}
 	});
 
-	// A stashed prompt loses its point once the user sends that exact text
-	// anyway -- dropping it here is what keeps the auto-restore from
-	// re-filling the editor with an already-submitted message.
-	pi.on("message_start", (event) => {
+	// Every accepted user prompt is the moment the stash comes back: the
+	// message the user just sent is their active prompt, so the stashed draft
+	// becomes the next one to review and submit. A sent prompt that matches a
+	// stash entry exactly is dropped instead -- it has been used, and leaving
+	// it stashed would make the auto-restore re-fill the editor with an
+	// already-submitted message. The editor normally reads empty here (pi
+	// clears it on submit), but if the just-sent text is still there we clear
+	// it; anything else typed in the meantime keeps the stash and gets a
+	// waiting notice.
+	pi.on("message_start", (event, ctx) => {
 		if (event.message.role !== "user") return;
-		const text = messageText(event.message.content as string | ContentPart[]);
-		const index = stash.lastIndexOf(text);
+		const sent = messageText(event.message.content as string | ContentPart[]);
+		const index = stash.lastIndexOf(sent);
 		if (index !== -1) stash.splice(index, 1);
-	});
-
-	pi.on("agent_end", (_event, ctx) => {
 		if (stash.length === 0) return;
-		if (ctx.ui.getEditorText().trim()) {
+
+		const editor = ctx.ui.getEditorText();
+		if (editor === sent) {
+			ctx.ui.setEditorText("");
+		} else if (editor.trim()) {
 			announce(ctx, "pi-prompt-stash: a stashed prompt is waiting; press the stash key to restore it.", "info", "pi-prompt-stash:waiting");
 			return;
 		}
@@ -100,13 +107,13 @@ export default function registerPromptStash(pi: ExtensionAPI, settingsRuntime: S
 	});
 
 	pi.registerShortcut(key, {
-		description: "Stash the editor prompt (press again with an empty editor to restore; pops automatically when a run ends)",
-		handler: async (ctx) => {
+		description: "Stash the editor prompt (press again with an empty editor to restore; pops automatically when your next prompt is sent)",
+		handler: (ctx) => {
 			const text = ctx.ui.getEditorText();
 			if (text.trim()) {
 				stash.push(text);
 				ctx.ui.setEditorText("");
-				announce(ctx, `pi-prompt-stash: prompt stashed. It pops automatically when the current run ends, or press ${key} to restore it now.`, "info", "pi-prompt-stash:stashed");
+				announce(ctx, `pi-prompt-stash: prompt stashed. It pops automatically when your next prompt is sent, or press ${key} to restore it now.`, "info", "pi-prompt-stash:stashed");
 				return;
 			}
 			pop(ctx);

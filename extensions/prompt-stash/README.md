@@ -18,18 +18,24 @@ stashed prompt to the editor; it is never sent on its own, only restored for
 you to review and submit. The stash is a stack: each stash press pushes, each
 restore press pops the most recent entry. Stashing twice keeps both prompts.
 
-When an agent run ends, the extension restores the most recent stash into the
-editor automatically -- but only when the editor is empty. If you typed
-something new while the run was running, the stash is kept and a notification
-says it is waiting. A stashed prompt that you send verbatim anyway is dropped
-from the stack (matched exactly against the text of each user `message_start`,
-string content or text parts joined), so the auto-restore can never refill the
-editor with an already-submitted message.
+When you send your next prompt, the extension restores the most recent stash
+into the editor automatically -- that send becomes the active prompt, and the
+stashed draft becomes the next one to review and submit. The restore happens
+on each accepted user message, so it also fires for steering and queued
+messages sent mid-run. If the editor holds unrelated new text at that moment,
+the stash is kept and a notification says it is waiting. If the editor still
+shows the text that was just submitted (pi has not cleared it yet), that text
+is cleared first, then the stash pops.
+
+A stashed prompt that you send verbatim anyway is dropped from the stack
+(matched exactly against the text of each user `message_start`, string content
+or text parts joined), so the auto-restore can never refill the editor with an
+already-submitted message.
 
 The default key is `ctrl+s`, which is free in pi's main editor: pi only binds
 `ctrl+s` inside pickers and selectors. `app.message.followUp` (`alt+enter`)
 remains pi's own way to queue a message that is *sent* when the current run
-ends; the stash only restores text into the editor.
+ends; the stash only restores text into the editor, never sends.
 
 Stashes live in memory for one pi process. A `session_start` clears the stack,
 so stashes do not follow you into a resumed or new session. pi's editor API
@@ -63,6 +69,6 @@ Valid modifiers are `ctrl`, `alt`, `shift`, and `super`. Valid named keys are
 An invalid key uses `ctrl+s` and shows one warning. A restore with a non-empty
 editor keeps the stash and says so instead of overwriting your text. Whitespace
 only editor text counts as empty. Pressing the key with an empty editor and an
-empty stack says so and changes nothing. Nothing is restored after a run if
+empty stack says so and changes nothing. Nothing is restored after a send if
 Pi's editor was not available to the extension; the stash survives and a later
 restore still works.

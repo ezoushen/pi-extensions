@@ -13,7 +13,7 @@ a run, see what it cost, and keep a draft prompt safe.
 | [`pi-cmem`](extensions/cmem) | Bridges pi to a [claude-mem](https://github.com/thedotmack/claude-mem) worker over its HTTP API, so pi sessions share one memory namespace with other agents working in the same repository. |
 | [`pi-focus-mode`](extensions/focus-mode) | Keeps the transcript focused by folding thinking and tool calls into progress lines and block titles, with exchange stats in the status line and summary card. |
 | [`pi-interrupt-steer`](extensions/interrupt-steer) | Interrupts a running turn and sends the editor text as one new user message. |
-| [`pi-prompt-stash`](extensions/prompt-stash) | Ctrl+S stash for the prompt editor: set a draft aside and get it back when the run ends, or with the same key. |
+| [`pi-prompt-stash`](extensions/prompt-stash) | Ctrl+S stash for the prompt editor: set a draft aside and get it back when your next prompt is sent, or with the same key. |
 
 ## Install
 
