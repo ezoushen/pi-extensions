@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { convertToPng, CustomEditor } from "@earendil-works/pi-coding-agent";
-import { Container, CURSOR_MARKER, type EditorComponent, getCapabilities, type TUI, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, type EditorComponent, getCapabilities, type TUI, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { readFile, stat } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -22,11 +22,11 @@ import { resolveSettings, type SettingsRuntime } from "../../shared/settings.ts"
  *   anchors; `[Image #N]` references stay verbatim and resolve against the
  *   images this session has already seen (user messages and tool results,
  *   in order of appearance).
- * - In the editor (`setEditorComponent`): a line that is exactly an image
- *   token is replaced in place by an attachment chip plus an aspect-fill
- *   half-block thumbnail; tokens inline with other text render as a chip.
- *   A token the cursor sits inside is left untouched until the cursor
- *   moves away, so cursor arithmetic is never disturbed.
+ * - In the editor (`setEditorComponent`): the prompt text is left as typed;
+ *   an attachment strip above it shows an aspect-fill half-block thumbnail
+ *   per unique image.
+ * - In the transcript: tiles above sent user messages. Tool-result images
+ *   are left to pi, which draws them itself.
  */
 
 interface ImageContent {
@@ -110,11 +110,9 @@ export function findImageTokens(text: string): TokenMatch[] {
 	const tokens: TokenMatch[] = [];
 	const overlaps = (start: number, end: number) => claimed.some(([s, e]) => start < e && s < end);
 	for (const { regex, build } of PATTERNS) {
-		regex.lastIndex = 0;
 		for (const m of text.matchAll(regex)) {
 			const token = build(m);
 			if (token === null) continue;
-			if (token.end <= token.start) continue;
 			if (overlaps(token.start, token.end)) continue;
 			claimed.push([token.start, token.end]);
 			tokens.push(token);
@@ -149,7 +147,7 @@ function mimeTypeForPath(absPath: string): string | undefined {
 }
 
 /** Resolve a token path (~, file://, relative) to an existing file, or null. Cached. */
-export function resolveImagePath(candidate: string): string | null {
+function resolveImagePath(candidate: string): string | null {
 	const cached = resolutionCache.get(candidate);
 	if (cached !== undefined) return cached;
 	let p = candidate;
@@ -200,7 +198,7 @@ async function loadImageContent(absPath: string): Promise<ImageContent | null> {
 // Minimal PNG decode (bit depth 8, non-interlaced) for half-block thumbnails
 // ---------------------------------------------------------------------------
 
-export interface RawImage {
+interface RawImage {
 	width: number;
 	height: number;
 	rgba: Uint8Array;
@@ -403,36 +401,25 @@ function nearest256(r: number, g: number, b: number): number {
 	return best;
 }
 
-function ansiFg(rgb: [number, number, number] | null, trueColor: boolean): string {
+/** SGR color for the foreground (38) or background (48) layer. */
+function ansiColor(layer: 38 | 48, rgb: [number, number, number] | null, trueColor: boolean): string {
 	if (rgb === null) return "";
 	const [r, g, b] = rgb;
-	return trueColor ? `\x1b[38;2;${r};${g};${b}m` : `\x1b[38;5;${nearest256(r, g, b)}m`;
-}
-
-function ansiBg(rgb: [number, number, number] | null, trueColor: boolean): string {
-	if (rgb === null) return "";
-	const [r, g, b] = rgb;
-	return trueColor ? `\x1b[48;2;${r};${g};${b}m` : `\x1b[48;5;${nearest256(r, g, b)}m`;
+	return trueColor ? `\x1b[${layer};2;${r};${g};${b}m` : `\x1b[${layer};5;${nearest256(r, g, b)}m`;
 }
 
 /**
- * Sample an image into a cols × rows cell grid of half-block lines.
- * "fill" center-crops to cover the box; "fit" maps the whole image.
+ * Render an image as half-block art cropped to fill a cols × rows cell box.
+ * Each terminal cell covers one source column and two source rows, so the
+ * crop is centered on the axis that overflows after cover-scaling.
  */
-function renderArtLines(img: RawImage, cols: number, rows: number, mode: "fill" | "fit"): string[] {
+export function aspectFillArt(img: RawImage, cols: number, rows: number): string[] {
 	const W = Math.max(1, Math.floor(cols));
 	const H = Math.max(2, Math.floor(rows) * 2);
 	const { width: sw, height: sh, rgba } = img;
-	let cropW: number;
-	let cropH: number;
-	if (mode === "fill") {
-		const scale = Math.max(W / sw, H / sh);
-		cropW = Math.min(sw, W / scale);
-		cropH = Math.min(sh, H / scale);
-	} else {
-		cropW = sw;
-		cropH = sh;
-	}
+	const scale = Math.max(W / sw, H / sh);
+	const cropW = Math.min(sw, W / scale);
+	const cropH = Math.min(sh, H / scale);
 	const cropX = (sw - cropW) / 2;
 	const cropY = (sh - cropH) / 2;
 	const trueColor = getCapabilities().trueColor !== false;
@@ -480,8 +467,8 @@ function renderArtLines(img: RawImage, cols: number, rows: number, mode: "fill" 
 				lastBg = "";
 				continue;
 			}
-			const fg = ansiFg(top, trueColor);
-			const bg = ansiBg(bottom, trueColor);
+			const fg = ansiColor(38, top, trueColor);
+			const bg = ansiColor(48, bottom, trueColor);
 			if (fg !== lastFg) line += fg;
 			if (bg !== lastBg) line += bg;
 			line += top === null ? "▄" : "▀";
@@ -493,32 +480,10 @@ function renderArtLines(img: RawImage, cols: number, rows: number, mode: "fill" 
 	return lines;
 }
 
-/**
- * Render an image as half-block art cropped to fill a cols × rows cell box.
- * Each terminal cell covers one source column and two source rows, so the
- * crop is centered on the axis that overflows after cover-scaling.
- */
-export function aspectFillArt(img: RawImage, cols: number, rows: number): string[] {
-	return renderArtLines(img, cols, rows, "fill");
-}
-
-/** Largest cols × rows cell box (≤ maxCols × maxRows) matching the image aspect. */
-export function fitCells(img: RawImage, maxCols: number, maxRows: number): { cols: number; rows: number } {
-	const capCols = Math.max(1, Math.floor(maxCols));
-	const capRows = Math.max(1, Math.floor(maxRows));
-	let cols = capCols;
-	let rows = Math.max(1, Math.ceil((cols * img.height) / img.width / 2));
-	if (rows > capRows) {
-		cols = Math.max(1, Math.floor((capRows * 2 * img.width) / img.height));
-		rows = Math.max(1, Math.ceil((cols * img.height) / img.width / 2));
-	}
-	return { cols, rows: Math.min(rows, capRows) };
-}
-
-/** Render the whole image, aspect-fit inside a maxCols × maxRows box. */
-export function aspectFitArt(img: RawImage, maxCols: number, maxRows: number): string[] {
-	const { cols, rows } = fitCells(img, maxCols, maxRows);
-	return renderArtLines(img, cols, rows, "fit");
+/** Decode base64 image content to pixels, transcoding non-PNG formats with pi first. */
+async function toRawImage(base64: string, mimeType: string): Promise<RawImage | null> {
+	const png = mimeType === "image/png" ? base64 : (await convertToPng(base64, mimeType))?.data;
+	return png === undefined ? null : decodePng(Buffer.from(png, "base64"));
 }
 
 // ---------------------------------------------------------------------------
@@ -531,12 +496,9 @@ interface ThumbEntry {
 	rows: number;
 	status: "pending" | "ready" | "failed";
 	lines?: string[];
-	widthPx?: number;
-	heightPx?: number;
 }
 
 const thumbCache = new Map<string, ThumbEntry>();
-const thumbLoading = new Set<string>();
 
 /** Anything that can schedule a TUI redraw after async work completes. */
 interface RenderSignal {
@@ -552,35 +514,19 @@ function ensureThumb(absPath: string, cols: number, rows: number, render: Render
 		/* keep placeholder sig; the load below reports the failure */
 	}
 	const cached = thumbCache.get(absPath);
-	if (cached && cached.sig === sig && cached.cols === cols && cached.rows === rows) return cached;
-	if (thumbLoading.has(absPath)) {
-		return cached ?? { sig, cols, rows, status: "pending" };
-	}
+	if (cached && ((cached.sig === sig && cached.cols === cols && cached.rows === rows) || cached.status === "pending")) return cached;
 	const entry: ThumbEntry = { sig, cols, rows, status: "pending" };
 	thumbCache.set(absPath, entry);
-	thumbLoading.add(absPath);
 	void (async () => {
 		try {
-			const bytes = await readFile(absPath);
 			const mime = mimeTypeForPath(absPath);
-			if (mime === undefined) throw new Error("unsupported extension");
-			let pngBase64: string | null = bytes.toString("base64");
-			if (mime !== "image/png") {
-				const converted = await convertToPng(pngBase64, mime);
-				if (converted === null) throw new Error("conversion failed");
-				pngBase64 = converted.data;
-			}
-			if (pngBase64 === null) throw new Error("no image data");
-			const img = decodePng(Buffer.from(pngBase64, "base64"));
+			const img = mime === undefined ? null : await toRawImage((await readFile(absPath)).toString("base64"), mime);
 			if (img === null) throw new Error("decode failed");
 			entry.lines = aspectFillArt(img, cols, rows);
-			entry.widthPx = img.width;
-			entry.heightPx = img.height;
 			entry.status = "ready";
 		} catch {
 			entry.status = "failed";
 		} finally {
-			thumbLoading.delete(absPath);
 			if (thumbCache.size > 64) {
 				for (const key of thumbCache.keys()) {
 					if (thumbCache.size <= 48) break;
@@ -679,7 +625,7 @@ function buildAttachmentStrip(body: string[], width: number, options: DecorateOp
 	const tiles: Array<{ label: string; art: string[] }> = [];
 	for (const item of items) {
 		const entry = item.absPath === null ? undefined : ensureThumb(item.absPath, options.cols, options.rows, options.tui);
-		const art = entry?.status === "ready" && entry.lines !== undefined ? entry.lines : [];
+		const art = entry?.lines ?? [];
 		tiles.push({ label: item.label, art });
 	}
 	return composeTileBands(tiles, width, options.cols, options.styler);
@@ -750,7 +696,7 @@ function collectImages(message: unknown, registry: RegistryImage[]): void {
 }
 
 // ---------------------------------------------------------------------------
-// Chat previews: user-message tiles (custom entry) and result image blocks
+// Chat preview: user-message tiles (custom entry)
 // ---------------------------------------------------------------------------
 
 const ENTRY_TYPE = "pi-image-thumbnails";
@@ -765,127 +711,26 @@ interface EntryData {
 /** cols/rows for chat tiles; refreshed from settings on each session start. */
 let chatTileSize = { cols: 10, rows: 4 };
 const noopRender: RenderSignal = { requestRender() {} };
-/** Cap for model-output image blocks in the transcript (rows). */
-const RESULT_MAX_ROWS = 10;
 
 /**
- * Component rendering one image block from a tool result, aspect-fit inside a
- * box of maxRows rows. Art is cached per width; decoding is synchronous for
- * PNG and cached asynchronous otherwise. Holds the content itself so it can
- * re-schedule a decode after the module cache evicts it, and asks the host to
- * repaint when the pixels land.
- */
-class ResultImageBlock {
-	artCache = new Map();
-	key: string;
-	data: string;
-	mimeType: string;
-	maxRows: number;
-	repaint: () => void;
-	constructor(key: string, data: string, mimeType: string, maxRows: number, repaint: () => void) {
-		this.key = key;
-		this.data = data;
-		this.mimeType = mimeType;
-		this.maxRows = maxRows;
-		this.repaint = repaint;
-	}
-	render(width: number): string[] {
-		const maxCols = Math.max(4, Math.min(width - 4, 80));
-		const cacheKey = `${maxCols}x${this.maxRows}`;
-		const cached = this.artCache.get(cacheKey);
-		if (cached !== undefined) return cached;
-		const raw = getRawImage(this.key, this.data, this.mimeType, this.repaint);
-		if (raw === undefined) return []; // still decoding; repaint fires when it lands
-		const art = aspectFitArt(raw, maxCols, this.maxRows);
-		this.artCache.set(cacheKey, art);
-		return art;
-	}
-	invalidate(): void {}
-}
-
-/** Base64 content key: cheap, deterministic, collision-safe for our purposes. */
-function contentKey(data: string): string {
-	return `${data.length}:${data.slice(0, 24)}:${data.slice(-24)}`;
-}
-
-const rawImageCache = new Map();
-const rawImagePending = new Set();
-const rawImageWaiters = new Map();
-
-/**
- * Get the decoded pixels for base64 image content. Without content, looks up
- * the cache only; with content, schedules the decode and calls `onReady` once
- * the pixels land (also after a cache eviction re-decode).
- */
-function getRawImage(key: string, data?: string, mimeType?: string, onReady?: () => void): RawImage | undefined {
-	const cached = rawImageCache.get(key);
-	if (cached !== undefined) return cached ?? undefined;
-	if (onReady !== undefined) {
-		const waiters = rawImageWaiters.get(key) ?? [];
-		waiters.push(onReady);
-		rawImageWaiters.set(key, waiters);
-	}
-	if (rawImagePending.has(key) || data === undefined || mimeType === undefined) return undefined;
-	rawImagePending.add(key);
-	void (async () => {
-		try {
-			let pngBase64: string | null = data;
-			if (mimeType !== "image/png") {
-				const converted = await convertToPng(data, mimeType);
-				if (converted === null) throw new Error("conversion failed");
-				pngBase64 = converted.data;
-			}
-			const img = decodePng(Buffer.from(pngBase64 ?? "", "base64"));
-			rawImageCache.set(key, img);
-		} catch {
-			rawImageCache.set(key, null);
-		} finally {
-			rawImagePending.delete(key);
-			const waiters = rawImageWaiters.get(key) ?? [];
-			rawImageWaiters.delete(key);
-			for (const waiter of waiters) {
-				try {
-					waiter();
-				} catch {
-					/* a dead component must not break the others */
-				}
-			}
-			if (rawImageCache.size > 16) {
-				for (const k of rawImageCache.keys()) {
-					if (rawImageCache.size <= 12) break;
-					rawImageCache.delete(k);
-				}
-			}
-		}
-	})();
-	return undefined;
-}
-
-/** Resolve the tile art for entry data; schedules async decode on first view. */
-function tileLinesFor(tilesData: EntryTile[]): Array<{ label: string; art: string[] }> {
-	const tiles: Array<{ label: string; art: string[] }> = [];
-	for (const tile of tilesData) {
-		if (typeof tile?.path !== "string" || tile.path === "") continue;
-		const thumb = ensureThumb(tile.path, chatTileSize.cols, chatTileSize.rows, noopRender);
-		const art = thumb.status === "ready" && thumb.lines !== undefined ? thumb.lines : [];
-		tiles.push({ label: tile.label, art });
-	}
-	return tiles;
-}
-
-/**
- * Transcript component for a user-message preview: re-composes on every render
- * so tiles that were still decoding appear as soon as they are ready.
+ * Transcript component for a user-message preview: re-composes while tiles
+ * are still decoding, then keeps the finished lines per width.
  */
 class EntryTilesComponent {
 	tiles: EntryTile[];
 	styler: (text: string) => string;
+	settled = new Map<number, string[]>();
 	constructor(tiles: EntryTile[], styler: (text: string) => string) {
-		this.tiles = tiles;
+		this.tiles = tiles.filter((tile) => typeof tile?.path === "string" && tile.path !== "");
 		this.styler = styler;
 	}
 	render(width: number): string[] {
-		return composeTileBands(tileLinesFor(this.tiles), width, chatTileSize.cols, this.styler);
+		const cached = this.settled.get(width);
+		if (cached !== undefined) return cached;
+		const thumbs = this.tiles.map((tile) => ({ label: tile.label, thumb: ensureThumb(tile.path, chatTileSize.cols, chatTileSize.rows, noopRender) }));
+		const lines = composeTileBands(thumbs.map(({ label, thumb }) => ({ label, art: thumb.lines ?? [] })), width, chatTileSize.cols, this.styler);
+		if (thumbs.every(({ thumb }) => thumb.status !== "pending")) this.settled.set(width, lines);
+		return lines;
 	}
 	invalidate(): void {}
 }
@@ -894,7 +739,7 @@ class EntryTilesComponent {
 // Extension wiring
 // ---------------------------------------------------------------------------
 
-export const SETTINGS_DEFINITION = {
+const SETTINGS_DEFINITION = {
 	cols: {
 		default: 10,
 		env: "PI_IMAGE_THUMBS_COLS",
@@ -922,61 +767,6 @@ export default function imageThumbnails(pi: ExtensionAPI, settingsRuntime: Setti
 		return new EntryTilesComponent(tilesData, (s) => theme.fg("dim", s));
 	});
 
-	// Chat preview of images the agent produces (tool results): wrap every
-	// tool's result renderer so each image block gets a sole aspect-fit image
-	// block under it. next() chains to other extensions' resolvers and the
-	// built-in renderers, so folding extensions keep working on top.
-	// registerToolRenderer postdates pi 0.87; call it only when present.
-	const toolRendererHost = pi as ExtensionAPI & {
-		// SAFETY: the resolver contract is positional and duck-typed; pi 1.x passes
-		// (toolName, next) with renderers shaped like the tool definition's.
-		registerToolRenderer?: (
-			resolver: (toolName: string, next: () => Record<string, unknown> | undefined) => Record<string, unknown> | undefined,
-		) => void;
-	};
-	toolRendererHost.registerToolRenderer?.((_toolName, next) => {
-		const base = next();
-		if (base === undefined) return undefined;
-		const baseRenderResult = base.renderResult as
-			| ((result: { content: Array<{ type: string; data?: string; mimeType?: string }> }, options: unknown, theme: unknown, context: unknown) => unknown)
-			| undefined;
-		return {
-			...base,
-			renderResult: (result: { content: Array<{ type: string; data?: string; mimeType?: string }> }, options: unknown, theme: unknown, context: unknown) => {
-				const baseComponent = baseRenderResult?.(result, options, theme, context);
-				const imageBlocks = result.content.filter((block) => block.type === "image" && typeof block.data === "string");
-				if (imageBlocks.length === 0) return baseComponent;
-				const repaint = typeof (context as { invalidate?: unknown })?.invalidate === "function"
-					? (context as { invalidate: () => void }).invalidate
-					: () => {};
-				const container = new Container();
-				// SAFETY: baseComponent is a pi-tui Component produced by the wrapped
-				// renderer; the duck type is guaranteed by the host contract.
-				if (baseComponent !== undefined && baseComponent !== null) container.addChild(baseComponent as Container);
-			for (const block of imageBlocks) {
-				if (typeof block.data !== "string") continue;
-				const key = contentKey(block.data);
-				// Fast path: PNG decodes synchronously so the art is ready on the
-				// first render; the async path only serves other formats.
-				if ((block.mimeType ?? "image/png") === "image/png" && rawImageCache.get(key) === undefined) {
-					try {
-						const raw = decodePng(Buffer.from(block.data, "base64"));
-						if (raw !== null) rawImageCache.set(key, raw);
-					} catch {
-						/* fall through to the async path */
-					}
-				}
-				container.addChild(new ResultImageBlock(key, block.data, block.mimeType ?? "image/png", RESULT_MAX_ROWS, repaint));
-			}
-				return container;
-			},
-		};
-	});
-
-	pi.on("session_start", () => {
-		registry.length = 0;
-	});
-
 	pi.on("message_end", (event) => {
 		collectImages(event.message, registry);
 	});
@@ -988,17 +778,19 @@ export default function imageThumbnails(pi: ExtensionAPI, settingsRuntime: Setti
 		const images: ImageContent[] = [...(event.images ?? [])];
 		const tiles: EntryTile[] = [];
 		let text = event.text;
-		for (const token of tokens.toReversed()) {
+		const loaded = await Promise.all(tokens.map(async (token) => {
+			const absPath = token.kind === "path" ? resolveImagePath(token.path ?? "") : null;
+			return absPath === null ? null : { absPath, content: await loadImageContent(absPath) };
+		}));
+		for (const [token, index] of tokens.map((token, index) => [token, index] as const).toReversed()) {
 			if (token.kind === "reference") {
 				const image = token.ref !== undefined && token.ref >= 1 ? registry[token.ref - 1] : undefined;
 				if (image === undefined) continue;
 				images.unshift({ type: "image", data: image.data, mimeType: image.mimeType });
 				continue; // the [Image #N] anchor already reads well in context
 			}
-			const absPath = resolveImagePath(token.path ?? "");
-			if (absPath === null) continue;
-			const content = await loadImageContent(absPath);
-			if (content === null) continue;
+			const { absPath, content } = loaded[index] ?? {};
+			if (absPath === undefined || content == null) continue;
 			images.unshift(content);
 			tiles.unshift({ path: absPath, label: basename(absPath) });
 			text = text.slice(0, token.start) + `[image: ${basename(absPath)}]` + text.slice(token.end);
@@ -1014,6 +806,7 @@ export default function imageThumbnails(pi: ExtensionAPI, settingsRuntime: Setti
 	});
 
 	pi.on("session_start", (_event, ctx: ExtensionContext) => {
+		registry.length = 0;
 		if (ctx.mode !== "tui") return;
 		const resolved = resolveSettings("pi-image-thumbnails", SETTINGS_DEFINITION, ctx, settingsRuntime);
 		const cols = resolved.cols.value;

@@ -81,6 +81,8 @@ editor falls back to plain text.
   current session, oldest first, capped at 100 images.
 - A bare filename such as `photo.png` (no slash) is treated as prose, not a
   path; use `./photo.png`.
+- Images in tool results are left to pi, which draws them itself in kitty and
+  iTerm2 terminals (Show images in `/settings`).
 
 ## License
 
