@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import test from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { ToolFoldModel } from "./src/tool-fold.ts";
@@ -155,4 +157,32 @@ test("tool title uses the active dim theme on each render; native open output ke
 		assert.match(opened[0], /\x1b\[38;2;120;120;120m.*bash/);
 		assert.deepEqual(opened.slice(1), trimBlankEdges(original.call(tool, 80)));
 	} finally { patch.restore(); }
+});
+
+test("opened tool keeps the rows a terminal image reserves below its escape line", async () => {
+	// Set the capability on the pi-tui copy ToolExecutionComponent reads, which may be nested under pi-coding-agent.
+	const piRequire = createRequire(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")));
+	const { setCapabilities, getCapabilities } = await import(pathToFileURL(piRequire.resolve("@earendil-works/pi-tui")).href);
+	const saved = getCapabilities();
+	setCapabilities({ ...saved, images: "kitty" });
+	const { model, component, original, restore } = mount();
+	try {
+		// 1x1 PNG: pi renders it as one escape line plus blank rows reserving the image height.
+		const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+		component.updateResult({ content: [{ type: "text", text: "Read image file" }, { type: "image", data: png, mimeType: "image/png" }], isError: false });
+		model.end("call-1", false, component.result, 300);
+		const native = original.call(component, 80);
+		const nativeEscape = native.findIndex((line) => line.includes("\x1b_G"));
+		assert.ok(nativeEscape >= 0, "pi draws the image with the kitty protocol");
+		const reserved = native.length - 1 - nativeEscape;
+		assert.ok(reserved > 0, "pi reserves rows below a kitty image");
+		model.toggle("call-1");
+		const opened = component.render(80);
+		const escape = opened.findIndex((line) => line.includes("\x1b_G"));
+		assert.ok(escape >= 0, "the kitty escape line is rendered");
+		assert.equal(opened.length - 1 - escape, reserved, "rows reserved below the image must survive");
+	} finally {
+		restore();
+		setCapabilities(saved);
+	}
 });

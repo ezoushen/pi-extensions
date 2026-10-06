@@ -60,7 +60,6 @@ function createHarness() {
 	const events = new Map();
 	const entries = [];
 	const entryRenderers = new Map();
-	const toolRendererResolvers = [];
 	let editorFactory;
 	const ui = {
 		getEditorComponent: () => editorFactory,
@@ -84,11 +83,8 @@ function createHarness() {
 		registerEntryRenderer(customType, renderer) {
 			entryRenderers.set(customType, renderer);
 		},
-		registerToolRenderer(resolver) {
-			toolRendererResolvers.push(resolver);
-		},
 	};
-	return { pi, events, ui, entries, entryRenderers, toolRendererResolvers };
+	return { pi, events, ui, entries, entryRenderers };
 }
 
 function makeCtx(ui) {
@@ -298,41 +294,4 @@ test("sending a prompt appends a chat preview entry rendered as tiles", async ()
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
-});
-
-test("tool result renderer appends aspect-fit image blocks", async () => {
-	const { pi, toolRendererResolvers } = createHarness();
-	registerImageThumbnails(pi);
-	assert.equal(toolRendererResolvers.length, 1, "tool renderer resolver registered");
-
-	const baseCalls = [];
-	const base = {
-		renderCall: () => "base-call",
-		renderResult: () => baseCalls.push("rendered") && { render: () => ["base result"] },
-	};
-	const renderers = toolRendererResolvers[0]("read", () => base);
-	assert.equal(renderers.renderCall, base.renderCall, "renderCall passes through");
-
-	const pngBase64 = redBluePng().toString("base64");
-	const wrapped = renderers.renderResult(
-		{ content: [{ type: "text", text: "it is an image" }, { type: "image", data: pngBase64, mimeType: "image/png" }] },
-		{ expanded: false, isPartial: false },
-		{ fg: (_t, s) => s },
-		{},
-	);
-	assert.ok(wrapped, "wrapped renderer returns a component");
-	// PNG decodes synchronously on first render; art must appear and fit 10 rows
-	const lines = [];
-	const deadline = Date.now() + 5000;
-	while (Date.now() < deadline) {
-		lines.length = 0;
-		lines.push(...wrapped.render(60));
-		if (lines.some((line) => line.includes("▀"))) break;
-		await new Promise((r) => setTimeout(r, 25));
-	}
-	const stripAnsi = (line) => line.replace(new RegExp("\\x1b\\[[0-9;]*m", "g"), "");
-	const plain = lines.map(stripAnsi);
-	assert.ok(plain.includes("base result"), JSON.stringify(plain));
-	const artRows = plain.filter((line) => line.includes("▀"));
-	assert.ok(artRows.length > 0 && artRows.length <= 10, `expected <=10 art rows, got ${artRows.length}`);
 });

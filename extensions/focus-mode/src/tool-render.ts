@@ -91,13 +91,23 @@ function withGuide(theme: TitleTheme | undefined, prefix: string, lines: string[
 	return lines.map((line) => guide + line);
 }
 
-/** Pi wraps native tool output in blank padding; edge-only trimming keeps blank result lines intact. */
+/** A row carrying a kitty or iTerm2 image escape; mirrors pi-tui's unexported isImageLine. */
+function isImageLine(line: string): boolean {
+	return line.includes("\x1b_G") || line.includes("\x1b]1337;File=");
+}
+
+/**
+ * Pi wraps native tool output in blank padding; edge-only trimming keeps blank result lines intact.
+ * Pi draws terminal images (kitty, iTerm2) last, padded by blank rows that reserve their height, so
+ * output holding an image keeps its trailing rows.
+ */
 function withoutBlankEdges(lines: string[]): { lines: string[]; leading: number } {
 	const blank = (line: string) => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\x1b\][^\x07]*(?:\x07|\x1b\\\\)/g, "").trim() === "";
+	const hasImage = lines.some(isImageLine);
 	let start = 0;
 	let end = lines.length;
 	while (start < end && blank(lines[start])) start++;
-	while (end > start && blank(lines[end - 1])) end--;
+	while (!hasImage && end > start && blank(lines[end - 1])) end--;
 	return { lines: lines.slice(start, end), leading: start };
 }
 
