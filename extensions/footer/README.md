@@ -1,6 +1,6 @@
 # pi-session-footer
 
-A compact Pi footer showing the current directory, git branch and PR number, dirty-file counts, context usage, response speed, model display name, and other extensions' published status. Git status and PR lookups refresh in the background; the PR result, including no PR, is cached for the branch, and rendering reads cached state.
+A compact Pi footer showing the current directory, git branch and PR number, changed-file and untracked-file counts, context usage, response speed, model display name, and other extensions' published status. Git status and PR lookups refresh in the background; the PR result, including no PR, is cached for the branch, and rendering reads cached state.
 
 ## Install
 
@@ -24,7 +24,7 @@ node --test test/owner-status.test.mjs
 One status row, then one line per extension that publishes a status:
 
 ```text
-dir │ branch (#pr) (+added,-deleted) 5↑ 2↓ │ ██░░░░ 34% · 262k │ 27.4 tps │ (provider) Model [high]
+dir │ branch (#pr) (+added,-deleted) 1M 2? 5↑ 2↓ │ ██░░░░ 34% · 262k │ 27.4 tps │ (provider) Model [high]
 │ pi-lens · Searching the index
 │ perms · yolo
 ```
@@ -41,7 +41,7 @@ my-project
 
 - **Rendering never blocks the terminal.** `render()` returns strings built from cached state only. It launches no child process, so a slow `git` or `gh` cannot stall a redraw.
 - **Segments wrap; only impossible ones are trimmed.** The main row packs whole segments (directory, git, context, speed, model) into as many rows as the width requires: a segment that does not fit the rest of the row moves whole to the next row, and its text is never split. Every returned line fits the requested width — only a segment wider than the entire terminal, or an owner line whose status text exceeds the width, falls back to a `…` cut, because Pi's main-screen renderer rejects an over-width line.
-- **Git and PR data arrive asynchronously.** `git status --porcelain`, `git diff HEAD --numstat` and `git rev-list --left-right --count @{upstream}...HEAD` run through `execFile` with a 2500 ms timeout; `gh pr view` uses the same bound. The third query supplies the ahead/behind commit counts shown as `5↑ 2↓`. Failures are swallowed and the footer keeps rendering its last known state.
+- **Git and PR data arrive asynchronously.** `git status --porcelain`, `git diff HEAD --numstat` and `git rev-list --left-right --count @{upstream}...HEAD` run through `execFile` with a 2500 ms timeout; `gh pr view` uses the same bound. The third query supplies the ahead/behind commit counts shown as `5↑ 2↓`. The first query is split into tracked modifications (`1M`) and untracked entries (`2?`), so a file created during the session is visible even though `git diff HEAD` ignores it. Each count is omitted at zero, and only the untracked count is dimmed, so a new file reads differently from an edit. Failures are swallowed and the footer keeps rendering its last known state.
 - **Refreshes are serialized.** At most one refresh runs at a time, bursts coalesce into a single queued follow-up with a 1000 ms floor, and every request advances a generation counter so a stale result can never overwrite a newer one.
 - **The PR number is cached per branch.** A "no PR" answer is remembered for that branch, so a normal refresh does not call `gh` again; only a branch change or a forced refresh re-asks.
 - **Speed is the session average, not the current turn's rate.** Tokens from each completed assistant turn are accumulated with that turn's wall-clock time, so a fast final turn does not report a rate the session never sustained.
@@ -55,7 +55,7 @@ This package has no settings file and no configuration keys. It reads only what 
 ## Limitations
 
 - The footer shows whatever `footerData.getGitBranch()` reports; outside a git repository it shows the directory, context and model segments only.
-- Ahead/behind arrows appear only for a branch with an upstream; a local-only or detached branch shows none. `(+added,-deleted)` counts uncommitted line changes and is omitted when the tree is clean.
+- Ahead/behind arrows appear only for a branch with an upstream; a local-only or detached branch shows none. `(+added,-deleted)` counts uncommitted line changes and is omitted when the tree is clean. Untracked files never contribute to `(+added,-deleted)` because `git diff HEAD` does not see them; they are counted by `N?` instead. `git status --porcelain` collapses a new directory into one `?? dir/` entry, so `N?` counts entries, not files inside them.
 - Speed is the average over the whole session: output tokens from every completed assistant turn divided by their combined elapsed time, plus the live output so far while a turn is running. It stays blank (`-- tps`) until there is enough output over enough elapsed time to compute a rate.
 - A failed or unresponsive `git`/`gh` lookup keeps the last known values: previously fetched counts and PR numbers stay visible, and a segment is omitted only when no value was ever obtained. The footer itself keeps rendering throughout.
 - There is no periodic refresh when nothing happens: git state updates when a turn or tool result ends, or on a branch change.
@@ -65,5 +65,6 @@ This package has no settings file and no configuration keys. It reads only what 
 - **A line wider than the terminal, or a redraw that stalls:** the non-blocking guarantee is broken. Capture the session's width and the rendered line, then run `node --test test/owner-status.test.mjs` — the width suite fails if any returned line overflows.
 - **Stale git data replacing newer data:** run `node --test test/git-status.test.mjs`; the coalescing and generation suites fail if two refreshes overlap or an invalidated result is published.
 - **The same PR answer appearing after switching branches:** run `node --test test/pr-lookup.test.mjs`; the branch-cache suite fails if the per-branch cache is not cleared.
+- **The untracked count missing or not dimmed:** run `node --test test/git-status.test.mjs`; the colour suite fails if the `N?` span is not the only dimmed part of the git segment.
 - **Owner lines missing or not indented:** run `node --test test/owner-status.test.mjs`.
 - If the suites pass but the footer still misbehaves in a real session, the passing tests only narrow which paths were exercised: they do not show that this package is correct under every input or lifecycle (the suites drive mocked Pi contexts). Report the terminal width, the footer rows from the pane, the extension list Pi reports, and the event sequence that preceded the misbehaviour, so the cause can be located in this package or in its consumer.

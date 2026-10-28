@@ -13,7 +13,9 @@ type ResponseSpeed = {
 };
 
 type GitInfo = {
+	// Files with tracked modifications; untracked files are counted separately.
 	changedFiles: number;
+	untrackedFiles: number;
 	added: number;
 	deleted: number;
 	ahead?: number;
@@ -325,7 +327,9 @@ function parsePrNumber(output: string): number | undefined {
 }
 
 function parseGitInfo(status: string, numstat: string, divergence: string): GitInfo {
-	const changedFiles = status.split(/\r?\n/).filter((line) => line.length > 0).length;
+	const statusLines = status.split(/\r?\n/).filter((line) => line.length > 0);
+	const untrackedFiles = statusLines.filter((line) => line.startsWith("??")).length;
+	const changedFiles = statusLines.length - untrackedFiles;
 	let added = 0;
 	let deleted = 0;
 	for (const line of numstat.split(/\r?\n/)) {
@@ -341,12 +345,15 @@ function parseGitInfo(status: string, numstat: string, divergence: string): GitI
 	const ahead = Number(aheadText);
 	return {
 		changedFiles,
+		untrackedFiles,
 		added,
 		deleted,
 		ahead: Number.isFinite(ahead) ? ahead : undefined,
 		behind: Number.isFinite(behind) ? behind : undefined,
 	};
 }
+
+type GitColor = "mdLink" | "dim";
 
 function formatGitSection(
 	theme: ExtensionContext["ui"]["theme"],
@@ -355,13 +362,27 @@ function formatGitSection(
 ): string | undefined {
 	if (!branch) return undefined;
 	const branchText = info?.prNumber ? `${branch} (#${info.prNumber})` : branch;
-	const parts = [branchText];
+	// Changed and untracked file counts sit next to the line diff; the untracked
+	// count is dimmed so a newly created file reads differently from an edit.
+	const tokens: Array<{ text: string; color: GitColor }> = [{ text: branchText, color: "mdLink" }];
 	if (info && (info.added > 0 || info.deleted > 0)) {
-		parts.push(`(+${info.added},-${info.deleted})`);
+		tokens.push({ text: `(+${info.added},-${info.deleted})`, color: "mdLink" });
 	}
-	if (info?.ahead) parts.push(`${info.ahead}↑`);
-	if (info?.behind) parts.push(`${info.behind}↓`);
-	return theme.fg("mdLink", parts.join(" "));
+	if (info?.changedFiles) tokens.push({ text: `${info.changedFiles}M`, color: "mdLink" });
+	if (info?.untrackedFiles) tokens.push({ text: `${info.untrackedFiles}?`, color: "dim" });
+	if (info?.ahead) tokens.push({ text: `${info.ahead}↑`, color: "mdLink" });
+	if (info?.behind) tokens.push({ text: `${info.behind}↓`, color: "mdLink" });
+	// Merge adjacent same-colour tokens so the section stays a single visual group.
+	const runs: Array<{ texts: string[]; color: GitColor }> = [];
+	for (const token of tokens) {
+		const last = runs.at(-1);
+		if (last?.color === token.color) {
+			last.texts.push(token.text);
+		} else {
+			runs.push({ texts: [token.text], color: token.color });
+		}
+	}
+	return runs.map((run) => theme.fg(run.color, run.texts.join(" "))).join(" ");
 }
 
 function formatModelName(ctx: ExtensionContext, pi: ExtensionAPI): string {

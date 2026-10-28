@@ -4,7 +4,7 @@ import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import footer from "../footer.ts";
 
-function mount(branch = "feature/worktree") {
+function mount(branch = "feature/worktree", theme = { fg: (_color, value) => value }) {
 	const handlers = new Map();
 	let footerFactory;
 	let branchListener;
@@ -24,7 +24,6 @@ function mount(branch = "feature/worktree") {
 		},
 	};
 	return Promise.resolve(handlers.get("session_start")({}, ctx)).then(() => {
-		const theme = { fg: (_color, value) => value };
 		const ui = { requestRender() {} };
 		return {
 			ctx,
@@ -86,7 +85,7 @@ function stubDeferredGit() {
 	};
 }
 
-test("the footer shows the branch, changed-file count, and added/deleted lines", async () => {
+test("the footer shows the branch, changed-file count, untracked count, and added/deleted lines", async () => {
 	const git = stubGit(new Map([
 		["status --porcelain", " M src/changed.ts\n?? src/new.ts\n"],
 		["diff HEAD --numstat", "5\t3\tsrc/changed.ts\n"],
@@ -94,12 +93,64 @@ test("the footer shows the branch, changed-file count, and added/deleted lines",
 	try {
 		const mounted = await mount();
 		await new Promise((resolve) => setImmediate(resolve));
-		assert.match(mounted.renderer.render(120).join("\n"), /feature\/worktree \(\+5,-3\)/);
+		assert.match(mounted.renderer.render(120).join("\n"), /feature\/worktree \(\+5,-3\) 1M 1\?/);
 		assert.deepEqual(git.calls.map(({ args, options }) => ({ args, timeout: options.timeout })), [
 			{ args: ["status", "--porcelain"], timeout: 2_500 },
 			{ args: ["diff", "HEAD", "--numstat"], timeout: 2_500 },
 			{ args: ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], timeout: 2_500 },
 		]);
+	} finally {
+		git.restore();
+	}
+});
+
+test("untracked files are counted separately from tracked modifications", async () => {
+	const git = stubGit(new Map([
+		["status --porcelain", " M a.ts\n M b.ts\n?? new.ts\n?? dir/\n"],
+		["diff HEAD --numstat", "1\t0\ta.ts\n2\t0\tb.ts\n"],
+	]));
+	try {
+		const mounted = await mount();
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.match(mounted.renderer.render(120).join("\n"), /feature\/worktree \(\+3,-0\) 2M 2\?/);
+	} finally {
+		git.restore();
+	}
+});
+
+test("only the untracked count is dimmed", async () => {
+	const ANSI = { mdLink: "\u001b[38;5;110m", dim: "\u001b[2m", borderMuted: "\u001b[90m" };
+	const theme = { fg: (color, value) => `${ANSI[color] ?? ""}${value}\u001b[0m` };
+	const git = stubGit(new Map([
+		["status --porcelain", " M src/changed.ts\n?? src/new.ts\n"],
+		["diff HEAD --numstat", "5\t3\tsrc/changed.ts\n"],
+		["rev-list --left-right --count @{upstream}...HEAD", "1\t5\n"],
+	]));
+	try {
+		const mounted = await mount("feature/worktree", theme);
+		await new Promise((resolve) => setImmediate(resolve));
+		const line = mounted.renderer.render(200)[0];
+		const expected = `${ANSI.mdLink}feature/worktree (+5,-3) 1M\u001b[0m ${ANSI.dim}1?\u001b[0m ${ANSI.mdLink}5↑ 1↓\u001b[0m`;
+		assert.ok(line.includes(expected), `git segment colours: ${JSON.stringify(line)}`);
+		assert.match(line.replace(/\u001b\[[0-9;]*m/g, ""), /feature\/worktree \(\+5,-3\) 1M 1\? 5↑ 1↓/);
+	} finally {
+		git.restore();
+	}
+});
+
+test("a tracked-only change shows no untracked count", async () => {
+	const ANSI = { mdLink: "\u001b[38;5;110m", dim: "\u001b[2m", borderMuted: "\u001b[90m" };
+	const theme = { fg: (color, value) => `${ANSI[color] ?? ""}${value}\u001b[0m` };
+	const git = stubGit(new Map([
+		["status --porcelain", " M src/changed.ts\n"],
+		["diff HEAD --numstat", "5\t3\tsrc/changed.ts\n"],
+	]));
+	try {
+		const mounted = await mount("feature/worktree", theme);
+		await new Promise((resolve) => setImmediate(resolve));
+		const line = mounted.renderer.render(200)[0];
+		assert.doesNotMatch(line.replace(/\u001b\[[0-9;]*m/g, ""), /\?/);
+		assert.ok(line.includes(`${ANSI.mdLink}feature/worktree (+5,-3) 1M\u001b[0m`), "one merged git span, no dim gap");
 	} finally {
 		git.restore();
 	}
@@ -406,7 +457,7 @@ test("the footer shows how far the branch is ahead of and behind its upstream", 
 	try {
 		const mounted = await mount();
 		await new Promise((resolve) => setImmediate(resolve));
-		assert.match(mounted.renderer.render(140).join("\n"), /feature\/worktree \(\+10,-50\) 5↑ 1↓/);
+		assert.match(mounted.renderer.render(140).join("\n"), /feature\/worktree \(\+10,-50\) 1M 5↑ 1↓/);
 	} finally {
 		git.restore();
 	}
