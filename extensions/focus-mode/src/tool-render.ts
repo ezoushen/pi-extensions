@@ -83,6 +83,22 @@ const thinkingOwners = new WeakMap<object, { add: (owner: ThinkingOwner) => Patc
 /** Two columns per open layer; tree guides replace them without moving native Pi output. */
 const BLOCK_INDENT = 2;
 
+/**
+ * Wrapper state for one Pi Markdown child. Pi reuses these instances across `updateContent`
+ * calls, so the wrapper is installed once per instance and refreshes this state instead of
+ * wrapping again; a re-wrapped child nests one layer per streamed snapshot, and every layer
+ * that sits in an open progress fold takes `BLOCK_INDENT` off the width until Pi repeats a
+ * negative count and throws.
+ */
+interface MarkdownRenderState {
+	originalRender: (width: number) => string[];
+	key: string;
+	model: ToolFoldModel;
+	getTheme: () => TitleTheme | undefined;
+	component: AssistantComponent;
+}
+const markdownRenders = new WeakMap<object, MarkdownRenderState>();
+
 /** Aligns each dim tree guide with its parent control within the two-column layer gutter. */
 function withGuide(theme: TitleTheme | undefined, prefix: string, lines: string[]): string[] {
 	if (!prefix) return lines;
@@ -403,17 +419,26 @@ export function installThinkingFold(componentClass: AssistantClass, model: ToolF
 		texts.forEach((index, textIndex) => {
 			const native = children[markdown[textIndex]];
 			const key = `text:${message.timestamp}:${index}`;
-			const originalRender = native.render.bind(native);
 			const component = this;
-			native.render = (width: number) => {
-				const progress = model.progressForItem(key);
-				if (!progress) return originalRender(width);
-				const line = progress.lead ? progressRow(model, progress.exchange, getTheme(), component.outputPad, width) : [];
-				const guide = model.progressGuideForItem(key);
-				const continuation = guide?.continuation ?? "  ";
-				const rows = progress.open ? withGuide(getTheme(), continuation, originalRender(width - BLOCK_INDENT)) : [];
-				return progress.open ? [...line, ...rows] : line;
-			};
+			// Reuse this instance's own render once; the state below carries the current item.
+			const existing = markdownRenders.get(native);
+			const state: MarkdownRenderState = existing ?? { originalRender: native.render.bind(native), key, model, getTheme, component };
+			state.key = key;
+			state.model = model;
+			state.getTheme = getTheme;
+			state.component = component;
+			if (!existing) {
+				markdownRenders.set(native, state);
+				native.render = (width: number) => {
+					const progress = state.model.progressForItem(state.key);
+					if (!progress) return state.originalRender(width);
+					const line = progress.lead ? progressRow(state.model, progress.exchange, state.getTheme(), state.component.outputPad, width) : [];
+					const guide = state.model.progressGuideForItem(state.key);
+					const continuation = guide?.continuation ?? "  ";
+					const rows = progress.open ? withGuide(state.getTheme(), continuation, state.originalRender(Math.max(0, width - BLOCK_INDENT))) : [];
+					return progress.open ? [...line, ...rows] : line;
+				};
+			}
 			childKeys.set(native, key);
 			const controls = textControls.get(this) ?? [];
 			controls.push({ child: native, key });

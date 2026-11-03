@@ -117,6 +117,9 @@ Thinking folding uses `AssistantMessageComponent.updateContent` and Pi's
 at `thinking_end`, the first following non-thinking event, or message end,
 whichever comes first. Streamed snapshots of one assistant message must retain
 the same Pi message timestamp for the local clock to follow them.
+Pi reuses a message's Markdown children across those snapshots, so the fold wrapper is
+installed once per child and told which item it draws; installing it per snapshot would
+stack one indent layer per streamed chunk.
 Assistant messages should include usage and cost fields when the provider supports
 them. Model headlines use Pi's configured provider; no separate endpoint is needed.
 
@@ -138,6 +141,12 @@ claim provider-side queue time, exclusive model compute time, or billing beyond
 the usage object Pi received.
 
 ## Compatibility
+
+Built against the Pi 0.87.1 component interfaces, and the display wrappers are verified
+against Pi 1.5.0. Pi 1.5.0 reuses a message's Markdown children across `updateContent`
+snapshots instead of building new ones, which 0.3.4 handles by installing its fold wrapper
+once per child; 0.3.3 stacked one wrapper per snapshot and could exit Pi with
+`RangeError: Invalid count value` once an expanded progress line held interim text.
 
 Uninstall `pi-exchange-stats` before installing `pi-focus-mode`; both packages
 must not be loaded together. The published `pi-exchange-stats@0.1.0` had no
