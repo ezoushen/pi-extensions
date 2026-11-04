@@ -1,6 +1,6 @@
 {
   "name": "pi-image-thumbnails",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Image thumbnails for pi: paste a path, [Image #1], or markdown and it becomes a real image block on send plus an aspect-fill thumbnail in the prompt editor.",
   "type": "module",
   "main": "./image-thumbnails.js",
