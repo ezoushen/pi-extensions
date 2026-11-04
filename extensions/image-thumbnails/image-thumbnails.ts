@@ -401,9 +401,9 @@ function nearest256(r: number, g: number, b: number): number {
 	return best;
 }
 
-/** SGR color for the foreground (38) or background (48) layer. */
+/** SGR color for the foreground (38) or background (48) layer; null is the terminal default (39 / 49). */
 function ansiColor(layer: 38 | 48, rgb: [number, number, number] | null, trueColor: boolean): string {
-	if (rgb === null) return "";
+	if (rgb === null) return `\x1b[${layer + 1}m`;
 	const [r, g, b] = rgb;
 	return trueColor ? `\x1b[${layer};2;${r};${g};${b}m` : `\x1b[${layer};5;${nearest256(r, g, b)}m`;
 }
@@ -411,7 +411,8 @@ function ansiColor(layer: 38 | 48, rgb: [number, number, number] | null, trueCol
 /**
  * Render an image as half-block art cropped to fill a cols × rows cell box.
  * Each terminal cell covers one source column and two source rows, so the
- * crop is centered on the axis that overflows after cover-scaling.
+ * crop is centered on the axis that overflows after cover-scaling. Fully
+ * transparent pixels show the terminal's default background.
  */
 export function aspectFillArt(img: RawImage, cols: number, rows: number): string[] {
 	const W = Math.max(1, Math.floor(cols));
@@ -461,17 +462,11 @@ export function aspectFillArt(img: RawImage, cols: number, rows: number): string
 		for (let col = 0; col < W; col++) {
 			const top = sample(col, row * 2);
 			const bottom = sample(col, row * 2 + 1);
-			if (top === null && bottom === null) {
-				line += " ";
-				lastFg = "";
-				lastBg = "";
-				continue;
-			}
-			const fg = ansiColor(38, top, trueColor);
-			const bg = ansiColor(48, bottom, trueColor);
+			const fg = ansiColor(38, top ?? bottom, trueColor);
+			const bg = ansiColor(48, top === null ? null : bottom, trueColor);
 			if (fg !== lastFg) line += fg;
 			if (bg !== lastBg) line += bg;
-			line += top === null ? "▄" : "▀";
+			line += top !== null ? "▀" : bottom !== null ? "▄" : " ";
 			lastFg = fg;
 			lastBg = bg;
 		}

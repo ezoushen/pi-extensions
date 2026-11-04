@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import xterm from "@xterm/headless";
+import { getCapabilities, resetCapabilitiesCache, setCapabilities } from "@earendil-works/pi-tui";
 import registerImageThumbnails, { aspectFillArt, decodePng, findImageTokens } from "./image-thumbnails.ts";
 
 /** Encode raw RGBA pixels as a minimal 8-bit non-interlaced PNG. */
@@ -166,6 +168,82 @@ test("aspectFillArt crops to fill and emits half blocks", () => {
 	assert.equal(art.length, 2);
 	const stripAnsi = (line) => line.replace(new RegExp("\\x1b\\[[0-9;]*m", "g"), "");
 	assert.ok(art.every((line) => stripAnsi(line).length === 3));
+});
+
+const RED = [255, 0, 0];
+const GREEN = [0, 255, 0];
+const BLUE = [0, 0, 255];
+const CLEAR = null; // alpha 0
+
+/** RawImage from row-major pixels; `CLEAR` pixels are fully transparent. */
+function rawImage(width, height, pixels) {
+	const rgba = new Uint8Array(width * height * 4);
+	pixels.forEach((rgb, i) => {
+		if (rgb !== CLEAR) rgba.set([...rgb, 255], i * 4);
+	});
+	return { width, height, rgba };
+}
+
+/**
+ * Render a 2-row image at one source pixel per half-cell in a real terminal
+ * emulator and report what each half of each cell shows: "#rrggbb", "none"
+ * (the terminal's default background, i.e. see-through) or "text" (the
+ * terminal's default foreground, which is visible ink, never transparency).
+ */
+async function halfCells(width, pixels) {
+	const previous = getCapabilities();
+	setCapabilities({ ...previous, trueColor: true });
+	let lines;
+	try {
+		lines = aspectFillArt(rawImage(width, 2, pixels), width, 1);
+	} finally {
+		resetCapabilitiesCache();
+	}
+	const term = new xterm.Terminal({ cols: width + 4, rows: 2, allowProposedApi: true });
+	await new Promise((done) => term.write(lines.join("\r\n"), done));
+	const hex = (n) => `#${n.toString(16).padStart(6, "0")}`;
+	const cells = [];
+	for (let x = 0; x < width; x++) {
+		const cell = term.buffer.active.getLine(0).getCell(x);
+		const fg = cell.isFgDefault() ? "text" : hex(cell.getFgColor());
+		const bg = cell.isBgDefault() ? "none" : hex(cell.getBgColor());
+		const glyph = cell.getChars() || " ";
+		if (glyph === "▀") cells.push({ upper: fg, lower: bg });
+		else if (glyph === "▄") cells.push({ upper: bg, lower: fg });
+		else if (glyph === " ") cells.push({ upper: bg, lower: bg });
+		else throw new Error(`unexpected glyph ${JSON.stringify(glyph)}`);
+	}
+	term.dispose();
+	return cells;
+}
+
+test("aspectFillArt: a fully transparent cell shows no color, even right after a colored cell", async () => {
+	// top row: red, clear; bottom row: blue, clear
+	assert.deepEqual(await halfCells(2, [RED, CLEAR, BLUE, CLEAR]), [
+		{ upper: "#ff0000", lower: "#0000ff" },
+		{ upper: "none", lower: "none" },
+	]);
+});
+
+test("aspectFillArt: a transparent bottom half shows no color, even right after a colored cell", async () => {
+	// top row: red, green; bottom row: blue, clear
+	assert.deepEqual(await halfCells(2, [RED, GREEN, BLUE, CLEAR]), [
+		{ upper: "#ff0000", lower: "#0000ff" },
+		{ upper: "#00ff00", lower: "none" },
+	]);
+});
+
+test("aspectFillArt: a transparent top half shows no color above the bottom pixel", async () => {
+	// at line start — top row: clear, red; bottom row: blue, blue
+	assert.deepEqual(await halfCells(2, [CLEAR, RED, BLUE, BLUE]), [
+		{ upper: "none", lower: "#0000ff" },
+		{ upper: "#ff0000", lower: "#0000ff" },
+	]);
+	// right after a colored cell — top row: red, clear; bottom row: green, blue
+	assert.deepEqual(await halfCells(2, [RED, CLEAR, GREEN, BLUE]), [
+		{ upper: "#ff0000", lower: "#00ff00" },
+		{ upper: "none", lower: "#0000ff" },
+	]);
 });
 
 test("input event attaches existing files and anchors them; missing files pass through", async () => {
