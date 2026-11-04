@@ -411,8 +411,10 @@ function ansiColor(layer: 38 | 48, rgb: [number, number, number] | null, trueCol
 /**
  * Render an image as half-block art cropped to fill a cols × rows cell box.
  * Each terminal cell covers one source column and two source rows, so the
- * crop is centered on the axis that overflows after cover-scaling. Fully
- * transparent pixels show the terminal's default background.
+ * crop is centered on the axis that overflows after cover-scaling. Source
+ * pixels under 50% alpha count as transparent; a half-cell with no other
+ * pixels shows the terminal's default background, otherwise the alpha-weighted
+ * color of its remaining pixels at full strength.
  */
 export function aspectFillArt(img: RawImage, cols: number, rows: number): string[] {
 	const W = Math.max(1, Math.floor(cols));
@@ -443,6 +445,7 @@ export function aspectFillArt(img: RawImage, cols: number, rows: number): string
 			for (let x = x0; x < x1; x++) {
 				const o = (y * sw + x) * 4;
 				const a = (rgba[o + 3] ?? 0) / 255;
+				if (a < 0.5) continue;
 				r += (rgba[o] ?? 0) * a;
 				g += (rgba[o + 1] ?? 0) * a;
 				b += (rgba[o + 2] ?? 0) * a;

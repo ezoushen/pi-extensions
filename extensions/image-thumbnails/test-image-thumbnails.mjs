@@ -175,35 +175,35 @@ const GREEN = [0, 255, 0];
 const BLUE = [0, 0, 255];
 const CLEAR = null; // alpha 0
 
-/** RawImage from row-major pixels; `CLEAR` pixels are fully transparent. */
+/** RawImage from row-major [r, g, b] (opaque) or [r, g, b, a] pixels; `CLEAR` pixels are fully transparent. */
 function rawImage(width, height, pixels) {
 	const rgba = new Uint8Array(width * height * 4);
-	pixels.forEach((rgb, i) => {
-		if (rgb !== CLEAR) rgba.set([...rgb, 255], i * 4);
+	pixels.forEach((px, i) => {
+		if (px !== CLEAR) rgba.set(px.length === 4 ? px : [...px, 255], i * 4);
 	});
 	return { width, height, rgba };
 }
 
 /**
- * Render a 2-row image at one source pixel per half-cell in a real terminal
- * emulator and report what each half of each cell shows: "#rrggbb", "none"
+ * Render an image as one row of `cols` cells in a real terminal emulator and
+ * report what each half of each cell shows: "#rrggbb", "none"
  * (the terminal's default background, i.e. see-through) or "text" (the
  * terminal's default foreground, which is visible ink, never transparency).
  */
-async function halfCells(width, pixels) {
+async function halfCells(img, cols) {
 	const previous = getCapabilities();
 	setCapabilities({ ...previous, trueColor: true });
 	let lines;
 	try {
-		lines = aspectFillArt(rawImage(width, 2, pixels), width, 1);
+		lines = aspectFillArt(img, cols, 1);
 	} finally {
 		resetCapabilitiesCache();
 	}
-	const term = new xterm.Terminal({ cols: width + 4, rows: 2, allowProposedApi: true });
+	const term = new xterm.Terminal({ cols: cols + 4, rows: 2, allowProposedApi: true });
 	await new Promise((done) => term.write(lines.join("\r\n"), done));
 	const hex = (n) => `#${n.toString(16).padStart(6, "0")}`;
 	const cells = [];
-	for (let x = 0; x < width; x++) {
+	for (let x = 0; x < cols; x++) {
 		const cell = term.buffer.active.getLine(0).getCell(x);
 		const fg = cell.isFgDefault() ? "text" : hex(cell.getFgColor());
 		const bg = cell.isBgDefault() ? "none" : hex(cell.getBgColor());
@@ -219,7 +219,7 @@ async function halfCells(width, pixels) {
 
 test("aspectFillArt: a fully transparent cell shows no color, even right after a colored cell", async () => {
 	// top row: red, clear; bottom row: blue, clear
-	assert.deepEqual(await halfCells(2, [RED, CLEAR, BLUE, CLEAR]), [
+	assert.deepEqual(await halfCells(rawImage(2, 2, [RED, CLEAR, BLUE, CLEAR]), 2), [
 		{ upper: "#ff0000", lower: "#0000ff" },
 		{ upper: "none", lower: "none" },
 	]);
@@ -227,20 +227,59 @@ test("aspectFillArt: a fully transparent cell shows no color, even right after a
 
 test("aspectFillArt: a transparent bottom half shows no color, even right after a colored cell", async () => {
 	// top row: red, green; bottom row: blue, clear
-	assert.deepEqual(await halfCells(2, [RED, GREEN, BLUE, CLEAR]), [
+	assert.deepEqual(await halfCells(rawImage(2, 2, [RED, GREEN, BLUE, CLEAR]), 2), [
 		{ upper: "#ff0000", lower: "#0000ff" },
 		{ upper: "#00ff00", lower: "none" },
 	]);
 });
 
+test("aspectFillArt: a pixel under 50% alpha counts as transparent", async () => {
+	// one pixel per half-cell — top row: red at alpha 1/255, green at alpha 127/255; bottom row: blue
+	assert.deepEqual(await halfCells(rawImage(2, 2, [[255, 0, 0, 1], [0, 255, 0, 127], BLUE, BLUE]), 2), [
+		{ upper: "none", lower: "#0000ff" },
+		{ upper: "none", lower: "#0000ff" },
+	]);
+	// 2×2 source pixels per half-cell — the first top block is four red pixels at alpha 127/255
+	const faint = [255, 0, 0, 127];
+	const pixels = [faint, faint, GREEN, GREEN, faint, faint, GREEN, GREEN, ...Array(8).fill(BLUE)];
+	assert.deepEqual(await halfCells(rawImage(4, 4, pixels), 2), [
+		{ upper: "none", lower: "#0000ff" },
+		{ upper: "#00ff00", lower: "#0000ff" },
+	]);
+});
+
+test("aspectFillArt: a pixel at least 50% alpha shows at full strength, unblended", async () => {
+	// one pixel per half-cell — top row: red at alpha 128/255, green at alpha 200/255; bottom row: blue
+	assert.deepEqual(await halfCells(rawImage(2, 2, [[255, 0, 0, 128], [0, 255, 0, 200], BLUE, BLUE]), 2), [
+		{ upper: "#ff0000", lower: "#0000ff" },
+		{ upper: "#00ff00", lower: "#0000ff" },
+	]);
+});
+
+test("aspectFillArt: a thin opaque feature survives downscaling", async () => {
+	// 2×2 source pixels per half-cell — the first top block holds one opaque pixel of four
+	const pixels = [RED, CLEAR, CLEAR, CLEAR, CLEAR, CLEAR, CLEAR, CLEAR, ...Array(8).fill(BLUE)];
+	assert.deepEqual(await halfCells(rawImage(4, 4, pixels), 2), [
+		{ upper: "#ff0000", lower: "#0000ff" },
+		{ upper: "none", lower: "#0000ff" },
+	]);
+	// faint pixels beside it add no tint — the first top block: one opaque red, three green at alpha 127/255
+	const faint = [0, 255, 0, 127];
+	const tinted = [RED, faint, CLEAR, CLEAR, faint, faint, CLEAR, CLEAR, ...Array(8).fill(BLUE)];
+	assert.deepEqual(await halfCells(rawImage(4, 4, tinted), 2), [
+		{ upper: "#ff0000", lower: "#0000ff" },
+		{ upper: "none", lower: "#0000ff" },
+	]);
+});
+
 test("aspectFillArt: a transparent top half shows no color above the bottom pixel", async () => {
 	// at line start — top row: clear, red; bottom row: blue, blue
-	assert.deepEqual(await halfCells(2, [CLEAR, RED, BLUE, BLUE]), [
+	assert.deepEqual(await halfCells(rawImage(2, 2, [CLEAR, RED, BLUE, BLUE]), 2), [
 		{ upper: "none", lower: "#0000ff" },
 		{ upper: "#ff0000", lower: "#0000ff" },
 	]);
 	// right after a colored cell — top row: red, clear; bottom row: green, blue
-	assert.deepEqual(await halfCells(2, [RED, CLEAR, GREEN, BLUE]), [
+	assert.deepEqual(await halfCells(rawImage(2, 2, [RED, CLEAR, GREEN, BLUE]), 2), [
 		{ upper: "#ff0000", lower: "#00ff00" },
 		{ upper: "none", lower: "#0000ff" },
 	]);
