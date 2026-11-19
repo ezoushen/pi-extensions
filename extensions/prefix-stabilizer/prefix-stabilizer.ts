@@ -34,7 +34,7 @@
  *      Both the prose <tools> block and the payload's tool-schema array are
  *      sorted by name, so load order stops mattering.
  *   3. Drift detection. The normalised system prompt is fingerprinted per
- *      process; if it changes mid-session the operator is warned once, naming
+ *      session, including resumes; if it changes the operator is warned once, naming
  *      the cost. The remaining triggers (rules/AGENTS.md edits, adding a skill,
  *      changing cwd) stop being silent ~130s taxes. Each drift is reported,
  *      because each one costs a full re-prefill; a repeated prompt does not
@@ -301,6 +301,25 @@ function requestFP(body: Record<string, unknown>, messages: any[] | undefined): 
 	return sha.digest("hex").slice(0, 12);
 }
 
+type PrefixSnapshot = { model: string; system: string; tools: string; messages: string[]; fingerprint: string };
+
+function diagnosticHash(value: unknown): string {
+	return createHash("sha256").update(JSON.stringify(value) ?? "").digest("hex").slice(0, 32);
+}
+
+function prefixSnapshot(body: Record<string, any>, model: string, fingerprint: string): PrefixSnapshot {
+	const messages: any[] = Array.isArray(body.messages) ? body.messages : [];
+	const leading = [];
+	for (const message of messages) {
+		if (message?.role !== "system") break;
+		leading.push(message);
+	}
+	return { model, fingerprint,
+		system: diagnosticHash([body.system, body.instructions, leading]),
+		tools: diagnosticHash(body.tools ?? []),
+		messages: messages.map((message) => `${message?.role ?? ""}:${diagnosticHash(message)}`) };
+}
+
 /** Filler pi appends to its tool list; a relocated copy may leave it out. */
 const TOOLS_FILLER = "In addition to the tools above, you may have access to other custom tools depending on the project.";
 
@@ -343,6 +362,7 @@ function promptSections(text: string): string[] {
 // name was contributed by an extension, which pi only consults in before_agent_start.
 const PI_SECTIONS = new Set(["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"]);
 const ENTRY_TYPE = "pi-prefix-stabilizer";
+const PREFIX_ENTRY_TYPE = "pi-prefix-stabilizer-prefix";
 
 const isPatch = (message: any, index: number): boolean => index > 0 && message?.role === "system" && Boolean(message.sections);
 const removesExtensionSection = (message: any): boolean =>
@@ -407,6 +427,8 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 	if (DISABLED) return;
 	let announced = false;
 	let fingerprint: string | null = null;
+	let previousPrefix: PrefixSnapshot | undefined;
+	let restored = false;
 
 	// Runs started by an extension message (a background-task notification, for example) skip
 	// before_agent_start, so the patch pi writes at their next turn diffs Pi's base prompt
@@ -425,6 +447,19 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 	// before the request that records it, and /tree can select a message in between.
 	const restore = (_event: unknown, ctx: any) => {
 		droppedRemovals.clear();
+		fingerprint = null;
+		previousPrefix = undefined;
+		restored = true;
+		for (const entry of ctx?.sessionManager?.getBranch?.() ?? ctx?.sessionManager?.getEntries?.() ?? []) {
+			if (entry?.type !== "custom" || entry.customType !== PREFIX_ENTRY_TYPE) continue;
+			const data = entry.data;
+			if (typeof data?.fingerprint === "string") fingerprint = data.fingerprint;
+			if (data?.version !== 1 || !Array.isArray(data.hashes)) continue;
+			const before = previousPrefix?.messages ?? [];
+			if (!Number.isInteger(data.from) || data.from < 0 || data.from > before.length) continue;
+			previousPrefix = { model: data.model, system: data.system, tools: data.tools, fingerprint: data.fingerprint,
+				messages: [...before.slice(0, data.from), ...data.hashes] };
+		}
 		for (const entry of ctx?.sessionManager?.getEntries?.() ?? []) {
 			if (entry?.type !== "custom" || entry.customType !== ENTRY_TYPE) continue;
 			for (const timestamp of entry.data?.droppedRemovals ?? []) droppedRemovals.add(timestamp);
@@ -508,10 +543,10 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 		// actually receives. Drift is then measured against the bytes that seed
 		// the prefix, not the raw transcript the extension already trims elsewhere.
 		const requestedMessages =
-			'messages' in payload
-				? keepExtensionSections((payload.messages as any[]) ?? [], droppedRemovals)
+			'messages' in out
+				? keepExtensionSections((out.messages as any[]) ?? [], droppedRemovals)
 			: undefined;
-		if (requestedMessages !== undefined && requestedMessages !== (payload as any).messages) {
+		if (requestedMessages !== undefined && requestedMessages !== out.messages) {
 			out.messages = requestedMessages;
 			n += 1;
 		}
@@ -531,6 +566,32 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 		// Fingerprint the NORMALISED, request-as-sent prompt, so benign reordering
 		// and trailing flips never warn. See requestFP.
 		const fp = requestFP(out, requestedMessages);
+		const current = prefixSnapshot(out, `${ctx?.model?.provider ?? ""}/${ctx?.model?.id ?? out.model ?? ""}`, fp);
+		if (previousPrefix && previousPrefix.model !== current.model) {
+			previousPrefix = undefined;
+			fingerprint = null;
+		}
+		let common = 0;
+		while (previousPrefix && common < previousPrefix.messages.length && common < current.messages.length &&
+			previousPrefix.messages[common] === current.messages[common]) common++;
+		const components: string[] = [];
+		let saved = true;
+		if (previousPrefix) {
+			if (previousPrefix.system !== current.system) components.push("system");
+			if (previousPrefix.tools !== current.tools) components.push("tools");
+			if (common < previousPrefix.messages.length) components.push("messages");
+		}
+		if (ctx?.sessionManager && typeof pi.appendEntry === "function" &&
+			(!previousPrefix || components.length > 0 || common !== current.messages.length)) {
+			const data = { version: 1, model: current.model, system: current.system, tools: current.tools,
+				fingerprint: fp, from: common, hashes: current.messages.slice(common), components, restored,
+				firstChangedMessage: previousPrefix && common < previousPrefix.messages.length ? common : null };
+			try { pi.appendEntry(PREFIX_ENTRY_TYPE, data); }
+			catch { saved = false; log({ prefix_diagnostic_save_failed: true }); }
+			if (components.length) log({ prefix_drift: true, ...data });
+		}
+		previousPrefix = saved ? current : undefined;
+		restored = false;
 		if (fingerprint === null) {
 			fingerprint = fp;
 		} else if (fp !== fingerprint) {
@@ -550,7 +611,6 @@ export default function activate(pi: ExtensionAPI, bootCtx?: any): void {
 			);
 			fingerprint = fp;
 		}
-
 		if (!n) return;
 		return out;
 	});

@@ -22,6 +22,53 @@ const repoRoot = resolve(packageRoot, "../..");
 const source = join(packageRoot, "prefix-stabilizer.ts");
 const requestFixture = join(repoRoot, "test", "fixtures", "run-prefix-stabilizer-request.mjs");
 const sequenceFixture = join(repoRoot, "test", "fixtures", "run-prefix-stabilizer-sequence.mjs");
+const resumeFixture = join(repoRoot, "test", "fixtures", "run-prefix-stabilizer-resume.mjs");
+
+function runResumes(phases) {
+	return JSON.parse(execFileSync(process.execPath, ["--experimental-strip-types", resumeFixture, source], {
+		cwd: repoRoot,
+		env: { ...process.env, PREFIX_STABILIZER_TEST_RESUMES: JSON.stringify(phases) },
+		encoding: "utf8",
+	}));
+}
+
+test("a changed leading prefix warns after restoring a previous extension activation", () => {
+	const a = { messages: [{ role: "system", content: "original instructions" }, { role: "user", content: "hello" }] };
+	const b = { messages: [{ role: "system", content: "revised instructions" }, { role: "user", content: "hello" }] };
+	const result = runResumes([[a], [b, b]]);
+	assert.equal(result.notifications.length, 1);
+	assert.match(result.notifications[0], /system prompt changed/);
+});
+
+test("resumed diagnostics identify schema and historical-message changes without retaining their contents", () => {
+	const a = { messages: [{ role: "system", content: "PRIVATE_SYSTEM_CANARY" }, { role: "user", content: "PRIVATE_USER_CANARY" }],
+		tools: [{ type: "function", function: { name: "lookup", description: "PRIVATE_SCHEMA_CANARY" } }] };
+	const b = { ...a, tools: [{ type: "function", function: { name: "lookup", description: "different schema" } }] };
+	const c = { ...b, messages: [a.messages[0], { role: "user", content: "changed old message" }] };
+	const d = { ...c, messages: [...c.messages, { role: "assistant", content: "answer" }, { role: "user", content: "next turn" }] };
+	const result = runResumes([[a], [b], [c, d, d]]);
+	const records = result.entries.filter((e) => e.customType === "pi-prefix-stabilizer-prefix");
+	assert.deepEqual(records[1].data.components, ["tools"]);
+	assert.deepEqual(records[2].data.components, ["messages"]);
+	assert.equal(records[2].data.firstChangedMessage, 1);
+	assert.deepEqual(records[3].data.components, []);
+	assert.equal(records.length, 4);
+	assert.doesNotMatch(JSON.stringify(records), /PRIVATE_(?:SYSTEM|USER|SCHEMA)_CANARY|changed old message|different schema|next turn/);
+});
+
+test("resumed fingerprints compare normalized message prefixes rather than their original install paths", () => {
+	const home = mkdtempSync(join(tmpdir(), "pi-prefix-resume-paths-"));
+	try {
+		const roots = ["first", "second"].map((name) => join(home, name, "node_modules/@earendil-works/pi-coding-agent"));
+		for (const root of roots) mkdirSync(root, { recursive: true });
+		const payloads = roots.map((root) => ({ messages: [{ role: "system", content: `Pi documentation: ${root}/docs` }] }));
+		const result = runResumes([[payloads[0]], [payloads[1]]]);
+		assert.deepEqual(result.payloads[0], result.payloads[1]);
+		assert.equal(result.notifications.length, 0);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
 
 function snapshot(root, current = root) {
 	return readdirSync(current, { withFileTypes: true })

@@ -48,7 +48,7 @@ const packageRequirements = {
 		"| `createSymlink` | `false` |",
 		"| `PI_PREFIX_STABILIZER` | enabled |",
 		"| `PI_PREFIX_STABILIZER_LOG` | unset |",
-		"Default installation performs no filesystem writes",
+		"Pi saves hash-only diagnostics",
 	],
 	"pi-focus-mode": [
 		"`processKey`, `exchangeKey`, and `pickerKey`",

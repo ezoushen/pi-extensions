@@ -5,7 +5,7 @@ a server-side prefix cache can reuse it.
 
 The extension normalizes install paths inside the system prompt, sorts tool-schema
 lists by name, then fingerprints the normalized leading system text. It warns when that
-text changes during a session because one early changed token invalidates every cached
+text changes during a session or across a resume because one early changed token invalidates every cached
 block after it. System messages later in the conversation, which Pi sends to models with
 `supportsMidConvoSystemMessages`, extend the cached prefix and do not warn.
 
@@ -118,7 +118,28 @@ Two environment-only controls preserve the original operational interface:
 | `PI_PREFIX_STABILIZER` | enabled | Set to `0` to disable the extension. |
 | `PI_PREFIX_STABILIZER_LOG` | unset | Append JSON records for rewrites, drift, and symlink operations. |
 
-Default installation performs no filesystem writes.
+The extension creates no files or symlinks by default. Pi saves hash-only diagnostics
+through its normal session transcript.
+
+## Resume diagnostics
+
+Each changed request records a `pi-prefix-stabilizer-prefix` custom session entry.
+It contains hashes of the normalized system text, tool definitions and messages,
+the model identity, and the first changed message index. Prompt text, schema contents,
+tool arguments and image bytes are not recorded. Appended messages are distinguished
+from changes to an existing prefix. Unchanged requests add no duplicate entry; message
+hashes are stored as deltas rather than copying the whole history at each turn.
+
+Session restore and tree navigation replay these entries from the selected branch.
+The first resumed request can therefore be compared with the last recorded request,
+and system drift warnings retain their baseline across activations. A model change
+starts a new baseline. Older sessions need one request to establish their first record.
+
+Diagnostic `components` names `system`, `tools`, or `messages` when an existing prefix
+changes; `firstChangedMessage` identifies its position without revealing its contents.
+These are candidate input differences, not proof of the server's cache key or eviction
+victim. A later provider hook can still modify the request after this extension runs.
+When `PI_PREFIX_STABILIZER_LOG` is set, component changes are also logged as `prefix_drift`.
 
 ## Measurements
 
